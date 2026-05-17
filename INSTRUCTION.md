@@ -1,9 +1,15 @@
 # FinAgent V2 Instructions
 
+## Build Rules
+
+- The Express server must always be bundled as ESM, not CJS, because `server.ts` uses `import.meta.url` for `createRequire`. Keep build output as `dist/server.mjs`.
+
 ## Changelog
 
 | Date | What changed | Why |
 | --- | --- | --- |
+| 2026-05-18 | Removed the mixed static/dynamic `services/ai` import pattern and raised the Vite chunk warning limit for the current bundle size. | Keeps `npm run build` warning-free while preserving the production ESM server output. |
+| 2026-05-18 | Changed production server build output from CJS `dist/server.cjs` to ESM `dist/server.mjs` and updated the start script. | Prevents `createRequire(import.meta.url)` from breaking in production bundles. |
 | 2026-05-17 | Added OpenAI prompt and output caps and reduced FundamentalAgent report text length for OpenAI-first PDF analysis. | Keeps requests under the current OpenAI tokens-per-minute limit while preserving the same agent call signatures. |
 | 2026-05-17 | Stopped attaching full PDF base64 data to OpenAI requests and documented the context-window issue in `README.md`. | Prevents OpenAI-first analysis from exceeding context limits by relying on extracted/truncated report text instead of duplicating the PDF payload. |
 | 2026-05-17 | Documented the fixed OpenAI schema string mismatch and added a follow-up note to review OpenAI-first compute usage in `README.md`. | Keeps the known issue history and compute-cost review task visible for future checks. |

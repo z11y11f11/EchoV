@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { AnalysisResult } from './types';
 import AnalysisDashboard from './components/AnalysisDashboard';
 import Uploader from './components/Uploader';
+import { runMasterAnalysis } from './services/ai';
 
 export default function App() {
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
@@ -63,7 +64,6 @@ export default function App() {
                 setAgentProgress(null);
 
                 try {
-                  const { runMasterAnalysis } = await import('./services/ai');
                   const aiResult = await runMasterAnalysis(
                      { ticker, options: ['highlights', 'risks', 'esg', 'competitors'] },
                      handleAgentEvent
