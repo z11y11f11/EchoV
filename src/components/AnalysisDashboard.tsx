@@ -1,0 +1,519 @@
+import React, { useEffect, useState, useRef } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
+import { 
+  TrendingUp, TrendingDown, Minus, 
+  AlertTriangle, CheckCircle2, FileText, 
+  BarChart3, RefreshCcw, DollarSign,
+  ChevronDown, Maximize2, Minimize2, Activity,
+  PieChart, Sprout, Target, Download
+} from 'lucide-react';
+import { 
+  LineChart, Line, XAxis, YAxis, CartesianGrid, 
+  Tooltip, ResponsiveContainer, Legend 
+} from 'recharts';
+import { AnalysisResult, StockData, HistoricalBar, ValuationSummary, CrossAnalysisResult } from '../types';
+import { ValuationModels } from './ValuationModels';
+import { PeerComparison } from './PeerComparison';
+import { crossAnalyze, synthesizeValuationVerdict } from '../services/ai';
+import { toPng } from 'html-to-image';
+import jsPDF from 'jspdf';
+
+interface DashboardProps {
+  data: AnalysisResult;
+  onReset: () => void;
+  onError?: (msg: string) => void;
+}
+
+export default function AnalysisDashboard({ data, onReset, onError }: DashboardProps) {
+  const [stock, setStock] = useState<StockData | null>(null);
+  const [history, setHistory] = useState<HistoricalBar[]>([]);
+  const [summary, setSummary] = useState<ValuationSummary | null>(null);
+  const [crossAnalysis, setCrossAnalysis] = useState<CrossAnalysisResult | null>(null);
+  const [loadingCrossAnalysis, setLoadingCrossAnalysis] = useState(false);
+  const [resolvedTicker, setResolvedTicker] = useState<string>('');
+  const [loadingStock, setLoadingStock] = useState(false);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [loadingSummary, setLoadingSummary] = useState(false);
+
+  const [sections, setSections] = useState({
+    metrics: true,
+    history: true,
+    valuation: false,
+    summary: true,
+    insights: true,
+    esg: true,
+    competitors: false
+  });
+
+  const dashboardRef = useRef<HTMLDivElement>(null);
+  const [isExporting, setIsExporting] = useState(false);
+
+  const exportPDF = async (exportAll = false) => {
+    if (!dashboardRef.current) return;
+    setIsExporting(true);
+
+    let originalState = { ...sections };
+    if (exportAll) {
+      setAllSections(true);
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+
+    try {
+      const pdf = new jsPDF({
+        orientation: 'l',
+        unit: 'mm',
+        format: 'a4'
+      });
+
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      
+      const addDarkBackground = () => {
+        pdf.setFillColor(5, 8, 16); // #050810
+        pdf.rect(0, 0, pdfWidth, pageHeight, 'F');
+      };
+      
+      addDarkBackground();
+
+      let currentY = 10;
+      let firstPage = true;
+
+      const elements = Array.from(dashboardRef.current.querySelectorAll('.pdf-section'));
+      
+      for (const el of elements) {
+        const imgData = await toPng(el as HTMLElement, {
+          pixelRatio: 2,
+          backgroundColor: '#050810',
+          skipFonts: true,
+        });
+        
+        const imgProps = pdf.getImageProperties(imgData);
+        const height = (imgProps.height * (pdfWidth - 20)) / imgProps.width;
+        
+        if (currentY + height > pageHeight && !firstPage) {
+          pdf.addPage();
+          addDarkBackground();
+          currentY = 10;
+        }
+
+        if (height > pageHeight) {
+          let yOffset = 0;
+          let firstSlice = true;
+          while (yOffset < height) {
+            if (!firstSlice) {
+              pdf.addPage();
+              addDarkBackground();
+              currentY = 10;
+            }
+            pdf.addImage(imgData, 'PNG', 10, currentY - yOffset, pdfWidth - 20, height);
+            yOffset += (pageHeight - currentY - 10);
+            currentY = 10;
+            firstSlice = false;
+          }
+        } else {
+          pdf.addImage(imgData, 'PNG', 10, currentY, pdfWidth - 20, height);
+          currentY += height + 10;
+        }
+        firstPage = false;
+      }
+
+      pdf.save(`${data.company.ticker || 'Analysis'}_Report.pdf`);
+    } catch (err) {
+      console.error("PDF Export failed", err);
+      onError?.("Failed to generate PDF report.");
+    } finally {
+      if (exportAll) setSections(originalState);
+      setIsExporting(false);
+    }
+  };
+
+  const toggleSection = (key: keyof typeof sections) => {
+    setSections(prev => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const setAllSections = (isOpen: boolean) => {
+    setSections({
+      metrics: isOpen,
+      history: isOpen,
+      valuation: isOpen,
+      summary: isOpen,
+      insights: isOpen,
+      esg: isOpen,
+      competitors: isOpen
+    });
+  };
+
+  const allExpanded = Object.values(sections).every(Boolean);
+
+  useEffect(() => {
+    const resolveAndFetch = async () => {
+      if (!data.company.ticker) return;
+      
+      let finalTicker = data.company.ticker.trim();
+      
+      try {
+        const searchRes = await fetch(`/api/search/${encodeURIComponent(finalTicker)}`);
+        if (searchRes.ok) {
+          const searchData = await searchRes.json();
+          if (searchData.quotes && searchData.quotes.length > 0) {
+             finalTicker = searchData.quotes[0].symbol;
+          }
+        }
+      } catch (e) {
+        console.warn("Search resolution fallback", e);
+      }
+      
+      setResolvedTicker(finalTicker);
+      await Promise.allSettled([
+        fetchStock(finalTicker),
+        fetchHistory(finalTicker),
+        fetchSummary(finalTicker)
+      ]);
+    };
+
+    resolveAndFetch();
+  }, [data.company.ticker]);
+
+  useEffect(() => {
+    if (summary && stock && !loadingStock && !loadingSummary && !crossAnalysis && !loadingCrossAnalysis) {
+      setLoadingCrossAnalysis(true);
+      crossAnalyze(data, {
+        price: stock.regularMarketPrice,
+        summary
+      }).then(res => setCrossAnalysis(res))
+        .catch(err => console.error("Cross analysis failed", err))
+        .finally(() => setLoadingCrossAnalysis(false));
+    }
+  }, [summary, stock, loadingStock, loadingSummary, data, crossAnalysis, loadingCrossAnalysis]);
+
+  const fetchSummary = async (ticker: string) => {
+    setLoadingSummary(true);
+    try {
+      const response = await fetch(`/api/stock/${ticker}/summary`);
+      if (response.ok) {
+        const raw = await response.json();
+        const stats = raw.defaultKeyStatistics || {};
+        const financial = raw.financialData || {};
+        const detail = raw.summaryDetail || {};
+
+        setSummary({
+          trailingPE: detail.trailingPE || stats.trailingPE,
+          forwardPE: detail.forwardPE || stats.forwardPE,
+          priceToBook: stats.priceToBook,
+          pegRatio: stats.pegRatio,
+          enterpriseToEbitda: stats.enterpriseToEbitda,
+          dividendYield: detail.dividendYield,
+          payoutRatio: stats.payoutRatio,
+          ebitdaMargins: financial.ebitdaMargins,
+          returnOnEquity: financial.returnOnEquity,
+          revenueGrowth: financial.revenueGrowth,
+          recommendationKey: financial.recommendationKey,
+          targetMeanPrice: financial.targetMeanPrice,
+          targetHighPrice: financial.targetHighPrice,
+          targetLowPrice: financial.targetLowPrice,
+          numberOfAnalystOpinions: financial.numberOfAnalystOpinions,
+          recommendationTrend: raw.recommendationTrend?.trend || [],
+        });
+      }
+    } catch (err) {
+      console.error('Failed to fetch summary', err);
+    } finally {
+      setLoadingSummary(false);
+    }
+  };
+
+  const fetchHistory = async (ticker: string) => {
+    setLoadingHistory(true);
+    try {
+      const response = await fetch(`/api/stock/${ticker}/history`);
+      if (response.ok) {
+        const rawData: any[] = await response.json();
+        const sorted = rawData.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+        
+        const calculateMA = (data: any[], index: number, period: number) => {
+          if (index < period - 1) return undefined;
+          let sum = 0, count = 0;
+          for (let i = 0; i < period; i++) {
+            const closeVal = data[index - i]?.close;
+            if (closeVal != null) { sum += closeVal; count++; }
+          }
+          return count === period ? parseFloat((sum / period).toFixed(2)) : undefined;
+        };
+
+        const processed = sorted.map((d, i, arr) => ({
+            date: new Date(d.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+            fullDate: new Date(d.date).toLocaleDateString(),
+            close: d.close != null ? parseFloat(d.close.toFixed(2)) : null,
+            ma20: calculateMA(arr, i, 20),
+            ma50: calculateMA(arr, i, 50),
+            ma200: calculateMA(arr, i, 200),
+        })).filter(d => d.close !== null);
+
+        setHistory(processed.slice(-250) as any);
+      }
+    } catch (err) {
+      console.error('Failed to fetch history', err);
+    } finally {
+      setLoadingHistory(false);
+    }
+  };
+
+  const fetchStock = async (ticker: string) => {
+    setLoadingStock(true);
+    try {
+      const response = await fetch(`/api/stock/${ticker}`);
+      if (response.ok) {
+        const quote = await response.json();
+        setStock(quote);
+      }
+    } catch (err) {
+      console.error('Failed to fetch stock', err);
+    } finally {
+      setLoadingStock(false);
+    }
+  };
+
+  const container = { hidden: { opacity: 0 }, show: { opacity: 1, transition: { staggerChildren: 0.1 } } };
+  const item = { hidden: { y: 20, opacity: 0 }, show: { y: 0, opacity: 1 } };
+  const getSentimentColor = (sentiment: string) => {
+    switch (sentiment.toLowerCase()) {
+      case 'positive': return 'bg-emerald-950/40 text-emerald-400 border-emerald-500/30';
+      case 'negative': return 'bg-rose-950/40 text-rose-400 border-rose-500/30';
+      default: return 'bg-slate-800/40 text-slate-400 border-slate-700';
+    }
+  };
+
+  return (
+    <motion.div ref={dashboardRef} variants={container} initial="hidden" animate="show" className="space-y-6 max-w-6xl mx-auto pb-20">
+      <header className="pdf-section flex flex-col md:flex-row md:items-center justify-between gap-4 bg-[#080a0f]/80 backdrop-blur-md p-6 rounded-2xl shadow-[0_0_30px_rgba(37,99,235,0.05)] border border-slate-800/80">
+        <div className="flex items-center gap-4">
+          <div className="w-12 h-12 bg-blue-600/20 border border-blue-500/30 rounded-xl flex items-center justify-center text-blue-400 font-bold text-xl shadow-[0_0_15px_rgba(37,99,235,0.2)]">
+            {data.company.name.charAt(0)}
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <h1 className="text-2xl font-bold text-white leading-tight font-display tracking-tight">
+                {data.company.name}
+              </h1>
+              {data.isHistorical && <span className="bg-amber-950/40 border border-amber-500/30 text-amber-400 text-[10px] font-bold px-2 py-0.5 rounded ml-2 uppercase tracking-widest">Historical Report</span>}
+            </div>
+            <div className="flex items-center gap-2 mt-1">
+              <span className="px-2 py-0.5 bg-slate-900 border border-slate-800 text-slate-400 rounded text-xs font-mono font-bold tracking-wider">
+                {resolvedTicker || data.company.ticker}
+              </span>
+              <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-widest border ${getSentimentColor(data.sentiment)}`}>
+                {data.sentiment} Sentiment
+              </span>
+              {data.reportDate && <span className="text-[10px] text-slate-500 font-bold tracking-wider uppercase ml-1">Date: {data.reportDate}</span>}
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-3">
+          {stock && (
+            <div className="flex flex-col items-end px-4 py-2 bg-[#0a0d14] rounded-xl border border-slate-800 shadow-inner">
+              <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Market Price</span>
+              <div className="flex items-center gap-2">
+                <span className="text-lg font-bold text-white font-mono">
+                  {stock.currency === 'USD' ? '$' : ''}{stock.regularMarketPrice?.toFixed(2)}
+                </span>
+                <span className={`text-sm font-bold flex items-center ${ (stock.regularMarketChangePercent || 0) >= 0 ? 'text-emerald-400 drop-shadow-[0_0_5px_rgba(52,211,153,0.5)]' : 'text-rose-400 drop-shadow-[0_0_5px_rgba(251,113,133,0.5)]' }`}>
+                   {(stock.regularMarketChangePercent || 0) >= 0 ? <TrendingUp className="w-4 h-4 mr-1" /> : <TrendingDown className="w-4 h-4 mr-1" />}
+                   {Math.abs(stock.regularMarketChangePercent || 0).toFixed(2)}%
+                </span>
+              </div>
+            </div>
+          )}
+          <div className="flex flex-col gap-1 items-center justify-center pr-1">
+            <button onClick={() => exportPDF(false)} disabled={isExporting} className="px-4 py-2 flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl transition-all shadow-[0_0_15px_rgba(37,99,235,0.3)] hover:shadow-[0_0_25px_rgba(37,99,235,0.5)] font-bold text-sm tracking-wide">
+              {isExporting ? <RefreshCcw className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+              Export PDF
+            </button>
+            <button onClick={() => exportPDF(true)} disabled={isExporting} className="text-[10px] uppercase font-bold tracking-widest text-slate-500 hover:text-blue-400 transition-colors whitespace-nowrap">
+              Export All Sections
+            </button>
+          </div>
+          <button onClick={onReset} className="p-2.5 text-slate-400 hover:text-white border border-slate-800 hover:bg-slate-800 bg-[#0a0d14] rounded-xl transition-colors shrink-0">
+            <RefreshCcw className="w-5 h-5" />
+          </button>
+        </div>
+      </header>
+
+      {/* 30-Second Summary Card */}
+      <div className="pdf-section bg-gradient-to-r from-slate-900 to-indigo-900 rounded-2xl p-6 text-white shadow-lg relative overflow-hidden">
+        <div className="absolute top-0 right-0 p-8 opacity-10">
+           <Activity className="w-32 h-32" />
+        </div>
+        <div className="relative z-10 flex flex-col md:flex-row gap-6">
+           <div className="flex-1">
+             <div className="text-xs font-bold text-indigo-300 uppercase tracking-widest mb-1">CIO Agent Summary</div>
+             <h2 className="text-xl font-bold mb-2">{data.company.name} ({resolvedTicker || data.company.ticker})</h2>
+             <p className="text-indigo-100 text-sm leading-relaxed max-w-2xl">
+               {data.summary.split('.')[0]}.
+             </p>
+           </div>
+           <div className="flex gap-4 shrink-0">
+             {/* Health Signal heuristic */}
+             {(() => {
+                const growthMetric = data.metrics.find(m => m.label.toLowerCase().includes('growth') || m.label.toLowerCase().includes('revenue'));
+                const isGrowthUp = growthMetric?.trend === 'up';
+                const isSentimentPos = data.sentiment === 'Positive';
+                let health = 'Yellow';
+                if (isSentimentPos && isGrowthUp) health = 'Green';
+                if (data.sentiment === 'Negative' || growthMetric?.trend === 'down') health = 'Red';
+                return (
+                  <div className="bg-white/10 backdrop-blur border border-white/20 rounded-xl p-4 flex flex-col items-center justify-center min-w-[120px]">
+                    <div className="text-[10px] text-white/70 uppercase tracking-wider font-bold mb-2">Financial Health</div>
+                    <div className={`flex items-center gap-2 font-bold ${health === 'Green' ? 'text-emerald-400' : health === 'Red' ? 'text-rose-400' : 'text-amber-400'}`}>
+                       <div className={`w-3 h-3 rounded-full ${health === 'Green' ? 'bg-emerald-400' : health === 'Red' ? 'bg-rose-400' : 'bg-amber-400'}`}></div>
+                       {health}
+                    </div>
+                  </div>
+                );
+             })()}
+             {/* Valuation Signal heuristic */}
+             {(() => {
+                let valMsg = "Fair";
+                let valColor = "text-amber-400";
+                if (summary?.targetMeanPrice && stock?.regularMarketPrice) {
+                   const diff = (summary.targetMeanPrice - stock.regularMarketPrice) / stock.regularMarketPrice;
+                   if (diff > 0.15) { valMsg = "Undervalued"; valColor = "text-emerald-400"; }
+                   else if (diff < -0.15) { valMsg = "Overvalued"; valColor = "text-rose-400"; }
+                } else if (summary?.trailingPE) {
+                   if (summary.trailingPE < 15) { valMsg = "Undervalued"; valColor = "text-emerald-400"; }
+                   else if (summary.trailingPE > 30) { valMsg = "Overvalued"; valColor = "text-rose-400"; }
+                }
+                return (
+                  <div className="bg-white/10 backdrop-blur border border-white/20 rounded-xl p-4 flex flex-col items-center justify-center min-w-[120px]">
+                    <div className="text-[10px] text-white/70 uppercase tracking-wider font-bold mb-2">Valuation</div>
+                    <div className={`font-bold ${valColor}`}>
+                       {summary ? valMsg : '...'}
+                    </div>
+                  </div>
+                );
+             })()}
+           </div>
+        </div>
+        {crossAnalysis && (
+          <div className="relative z-10 mt-4 pt-4 border-t border-white/10 flex items-start gap-3">
+             <Target className="w-5 h-5 text-indigo-300 shrink-0 mt-0.5" />
+             <p className="text-sm text-indigo-50 leading-relaxed font-medium">
+               <span className="text-white font-bold opacity-80 mr-2">Investment Verdict:</span>
+               {crossAnalysis.investmentVerdict}
+             </p>
+          </div>
+        )}
+      </div>
+
+      {/* Metrics Grid */}
+      <div className="pdf-section">
+      <CollapsibleSection title="Key Performance Indicators" icon={<Activity className="w-5 h-5 text-blue-500" />} isOpen={sections.metrics} onToggle={() => toggleSection('metrics')}>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          {data.metrics?.map((metric, idx) => (
+            <div key={idx} className="bg-[#080a0f]/80 p-5 rounded-xl border border-slate-800/80 group hover:border-blue-500/30 transition-colors shadow-lg">
+              <div className="flex justify-between items-start mb-2">
+                <span className="text-sm font-bold text-slate-400 font-display tracking-tight">{metric.label}</span>
+                <div className={`p-1.5 rounded-lg border ${metric.trend === 'up' ? 'bg-emerald-950/30 text-emerald-400 border-emerald-500/20' : metric.trend === 'down' ? 'bg-rose-950/30 text-rose-400 border-rose-500/20' : 'bg-slate-800/50 text-slate-400 border-slate-700/50'}`}>
+                  {metric.trend === 'up' ? <TrendingUp className="w-4 h-4" /> : metric.trend === 'down' ? <TrendingDown className="w-4 h-4" /> : <Minus className="w-4 h-4" />}
+                </div>
+              </div>
+              <div className="text-2xl font-black text-white font-mono group-hover:text-blue-400 transition-colors tracking-tight">
+                {metric.value}
+              </div>
+            </div>
+          ))}
+        </div>
+      </CollapsibleSection>
+      </div>
+
+      {/* Valuation Models */}
+      <div className="pdf-section">
+        <CollapsibleSection title="Valuation Models & Market Analytics" icon={<TrendingUp className="w-5 h-5 text-emerald-500" />} isOpen={sections.valuation} onToggle={() => toggleSection('valuation')}>
+          <ValuationModels summary={summary} stock={stock} loading={loadingSummary} />
+        </CollapsibleSection>
+      </div>
+
+      <div className="pdf-section">
+        <CollapsibleSection title="Executive Summary & Context" icon={<FileText className="w-5 h-5 text-purple-500" />} isOpen={sections.summary} onToggle={() => toggleSection('summary')}>
+           <div className="p-6 bg-[#0a0d14]/80 border border-slate-800/80 rounded-xl text-slate-300 leading-relaxed shadow-inner">
+             {data.summary}
+           </div>
+        </CollapsibleSection>
+      </div>
+
+      {(data.highlights?.length > 0 || data.risks?.length > 0) && (
+        <div className="pdf-section">
+          <CollapsibleSection title="Strategic Insights & Risks (Fundamental Agent)" icon={<AlertTriangle className="w-5 h-5 text-amber-500" />} isOpen={sections.insights} onToggle={() => toggleSection('insights')}>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {data.highlights?.length > 0 && (
+                <div className="p-6 bg-emerald-950/20 rounded-xl border border-emerald-900/50 shadow-lg">
+                  <h3 className="text-sm font-bold text-emerald-400 mb-4 flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-500" /> Investment Highlights</h3>
+                  <ul className="space-y-3">
+                    {data.highlights.map((h, i) => <li key={i} className="text-sm leading-relaxed text-slate-300"><span className="mr-2 font-black text-emerald-500 tracking-wider font-mono">{i+1}.</span>{h}</li>)}
+                  </ul>
+                </div>
+              )}
+              {data.risks?.length > 0 && (
+                <div className="p-6 bg-rose-950/20 rounded-xl border border-rose-900/50 shadow-lg">
+                  <h3 className="text-sm font-bold text-rose-400 mb-4 flex items-center gap-2"><AlertTriangle className="w-4 h-4 text-rose-500" /> Key Risks</h3>
+                  <ul className="space-y-3">
+                    {data.risks.map((r, i) => <li key={i} className="text-sm leading-relaxed text-slate-300"><span className="mr-2 font-black text-rose-500 tracking-wider font-mono">{i+1}.</span>{r}</li>)}
+                  </ul>
+                </div>
+              )}
+            </div>
+          </CollapsibleSection>
+        </div>
+      )}
+
+      {data.competitors && data.competitors.length > 0 && (
+        <div className="pdf-section">
+          <CollapsibleSection title="Peer Comparison (Peer Agent)" icon={<Target className="w-5 h-5 text-indigo-500" />} isOpen={sections.competitors} onToggle={() => toggleSection('competitors')}>
+          <PeerComparison competitors={data.competitors} currentTicker={resolvedTicker || data.company.ticker} />
+        </CollapsibleSection>
+        </div>
+      )}
+
+      {crossAnalysis && (
+        <div className="pdf-section">
+          <CollapsibleSection title="Cross Analysis & Signals (CIO Agent)" icon={<Target className="w-5 h-5 text-fuchsia-500" />} isOpen={true} onToggle={() => {}}>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className="p-6 bg-[#080a0f]/80 border border-blue-900/40 rounded-xl flex flex-col justify-center items-center shadow-[0_0_20px_rgba(37,99,235,0.1)]">
+                <div className="text-[10px] font-bold text-blue-400 uppercase tracking-widest mb-2">Fund/Quant Alignment</div>
+                <div className="text-5xl font-black text-white drop-shadow-[0_0_10px_rgba(59,130,246,0.8)]">{crossAnalysis.alignmentScore ?? 'N/A'}</div>
+              </div>
+              <div className="md:col-span-2">
+                <h4 className="font-bold text-sm text-slate-300 mb-3 flex items-center gap-2"><Activity className="w-4 h-4 text-fuchsia-400" /> Divergence Signals</h4>
+                <ul className="space-y-2">
+                  {crossAnalysis.divergenceSignals.map((sig, i) => (
+                    <li key={i} className="p-3 text-sm rounded-lg border bg-[#0a0d14]/80 border-slate-800 text-slate-300 shadow-inner flex gap-3 items-start">
+                      <div className="w-1.5 h-1.5 rounded-full bg-fuchsia-500 mt-2 shrink-0 animate-pulse"></div>
+                      <span className="leading-relaxed">{sig}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          </CollapsibleSection>
+        </div>
+      )}
+    </motion.div>
+  );
+}
+
+function CollapsibleSection({ title, icon, children, isOpen, onToggle, containerClassName = "" }: { title: string; icon: React.ReactNode; children: React.ReactNode; isOpen: boolean; onToggle: () => void; containerClassName?: string; }) {
+  return (
+    <div className="bg-[#080a0f]/80 backdrop-blur-sm rounded-2xl shadow-[0_0_20px_rgba(0,0,0,0.5)] border border-slate-800/80 overflow-hidden">
+      <button onClick={onToggle} className="w-full flex items-center justify-between p-5 hover:bg-[#0a0d14] transition-colors focus:outline-none">
+        <div className="flex items-center gap-3">
+          <div className="p-1.5 bg-blue-500/10 rounded-lg ring-1 ring-blue-500/20">
+             {icon}
+          </div>
+          <h2 className="text-lg font-bold text-white font-display tracking-wide">{title}</h2>
+        </div>
+        <ChevronDown className={`w-5 h-5 text-slate-500 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+      </button>
+      {isOpen && <div className={`p-6 pt-0 ${containerClassName}`}>{children}</div>}
+    </div>
+  );
+}

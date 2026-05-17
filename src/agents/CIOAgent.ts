@@ -1,0 +1,54 @@
+import { Type } from "@google/genai";
+import { runGenerativeAI } from "./LLMProvider";
+import { CrossAnalysisResult, ValuationVerdictResult, ValuationSummary } from "../types";
+
+export class CIOAgent {
+  /**
+   * Synthesizes fundamental data mapping with live market data to look for divergences
+   * and create an alignment score and final investment verdict.
+   */
+  static async crossAnalyze(fundamentalAnalysis: any, marketData: any): Promise<CrossAnalysisResult> {
+    console.log("CIOAgent: Running cross analysis");
+    
+    const schemaProperties = {
+      alignmentScore: { type: Type.NUMBER, description: "Score from 0 to 100" },
+      financialsAlignWithStockPerformance: { type: Type.BOOLEAN },
+      alignmentSummary: { type: Type.STRING },
+      divergenceSignals: { type: Type.ARRAY, items: { type: Type.STRING } },
+      investmentVerdict: { type: Type.STRING }
+    };
+    
+    const prompt = `
+      You are the Chief Investment Officer (CIO) agent. Compare the fundamental report analysis with the real-time market data.
+      Identify divergences and calculate an alignment score (0-100). Provide max 3 divergence signals, and a 1-sentence overall investment verdict.
+  
+      Report Fundamentals: ${JSON.stringify(fundamentalAnalysis)}
+      Market Data/Technical Trend: ${JSON.stringify(marketData)}
+    `;
+  
+    return await runGenerativeAI(prompt, schemaProperties, Object.keys(schemaProperties));
+  }
+
+  /**
+   * Provides a final valuation verdict based purely on numerical multiples and metrics.
+   */
+  static async synthesizeValuation(valuationData: ValuationSummary): Promise<ValuationVerdictResult> {
+    console.log("CIOAgent: Synthesizing valuation metrics");
+    
+    const schemaProperties = {
+      overallVerdict: { type: Type.STRING, enum: ["Undervalued", "Fair Value", "Overvalued"] },
+      confidenceLevel: { type: Type.STRING, enum: ["High", "Medium", "Low"] },
+      keyReason: { type: Type.STRING, description: "1 sentence reason" }
+    };
+    
+    const prompt = `
+      You are the CIO agent evaluating company valuation. Evaluate the following valuation metrics and determine
+      if the stock is Undervalued, Fair Value, or Overvalued. Give a confidence level and a 1-sentence reason.
+      Cross-reference PE, PB, PEG, EV/EBITDA, dividend yield, and analyst target price recommendation.
+  
+      Valuation Data: ${JSON.stringify(valuationData)}
+    `;
+  
+    return await runGenerativeAI(prompt, schemaProperties, Object.keys(schemaProperties));
+  }
+}
