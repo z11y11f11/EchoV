@@ -30,6 +30,46 @@ export class CIOAgent {
   }
 
   /**
+   * Generates analysis on a specific topic using LLM training knowledge when the source
+   * document or market data did not contain the requested information.
+   * Always appends a disclaimer marking the content as AI-synthesized.
+   */
+  static async synthesizeFromKnowledge(
+    companyName: string,
+    ticker: string,
+    topic: "esg" | "highlights" | "risks" | "summary",
+    knownContext: string
+  ): Promise<string> {
+    const schemaProperties = {
+      content: { type: Type.STRING }
+    };
+
+    const topicDescriptions: Record<string, string> = {
+      esg: "ESG (Environmental, Social, Governance) profile — environmental initiatives, carbon footprint, social responsibility practices, governance structure, sustainability commitments, and key ESG risks",
+      highlights: "Top 3-5 investment highlights as a bullet-point list — key competitive advantages, growth drivers, market position, and strategic strengths",
+      risks: "Top 3-5 key investment risks as a bullet-point list — competitive threats, regulatory exposure, market risks, and execution risks",
+      summary: "A concise investment summary — business model, market position, recent performance trends, and outlook"
+    };
+
+    const prompt = `
+      You are the CIO agent. The source document did not contain sufficient ${topic.toUpperCase()} information for ${companyName} (${ticker}).
+
+      Using your training knowledge about this publicly listed company, generate a well-informed ${topicDescriptions[topic] || topic}.
+
+      Known context already extracted:
+      ${knownContext.substring(0, 3000)}
+
+      Requirements:
+      - Be specific and factual. Do NOT invent precise financial figures.
+      - Reference real publicly known facts about ${companyName} (e.g. products, markets, initiatives, controversies).
+      - Conclude with this exact sentence on a new line: "[AI Synthesis — generated from model training knowledge; not extracted from the source document]"
+    `;
+
+    const result = await runGenerativeAI(prompt, schemaProperties, ["content"]);
+    return result.content;
+  }
+
+  /**
    * Provides a final valuation verdict based purely on numerical multiples and metrics.
    */
   static async synthesizeValuation(valuationData: ValuationSummary): Promise<ValuationVerdictResult> {

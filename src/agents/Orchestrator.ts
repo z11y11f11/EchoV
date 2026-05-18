@@ -82,9 +82,36 @@ export class OrchestratorAgent {
           onEvent({ agent: "CIOAgent", status: this.describeAgentReturn(verdict) });
           break;
         }
+
+        case "synthesize_knowledge": {
+          const topic = (toolCall.arguments.topic || "summary") as "esg" | "highlights" | "risks" | "summary";
+          const companyName = toolCall.arguments.companyName || result.company?.name || input.ticker || "Unknown Company";
+          const ticker = result.company?.ticker || input.ticker || "";
+          const context = toolCall.arguments.context || result.summary || "";
+          onEvent({ agent: "Orchestrator", status: `Calling synthesize_knowledge(${topic}) -> CIOAgent` });
+          try {
+            const synthesized = await CIOAgent.synthesizeFromKnowledge(companyName, ticker, topic, context);
+            if (topic === "esg") result.esgSummary = synthesized;
+            else if (topic === "highlights") result.highlights = synthesized.split('\n').filter(Boolean);
+            else if (topic === "risks") result.risks = synthesized.split('\n').filter(Boolean);
+            else if (topic === "summary") result.summary = (result.summary ? result.summary + "\n\n" : "") + synthesized;
+            onEvent({ agent: "CIOAgent", status: `Knowledge synthesis complete for "${topic}"` });
+          } catch (err: any) {
+            onEvent({ agent: "CIOAgent", status: `Knowledge synthesis failed: ${err.message}` });
+          }
+          break;
+        }
       }
     }
-    
+
+    // Reflection step: detect gaps between what was requested and what was returned,
+    // then fill them using CIOAgent's LLM knowledge as a fallback.
+    const gaps = this.detectGaps(input.options, input.userRequest || "", result);
+    if (gaps.length > 0) {
+      onEvent({ agent: "Orchestrator", status: `Reflection: gaps detected [${gaps.join(', ')}] — synthesizing from LLM knowledge...` });
+      await this.fillGapsWithKnowledge(gaps, result, input, onEvent);
+    }
+
     onEvent({ agent: "Orchestrator", status: "Analysis Complete" });
     return result as AnalysisResult;
   }
@@ -125,6 +152,65 @@ export class OrchestratorAgent {
       plan.push({ name: "synthesize_verdict", arguments: {} });
     }
     return plan;
+  }
+
+  /**
+   * Compares what the user requested against what agents actually returned.
+   * Returns topic names that are missing or clearly insufficient.
+   */
+  private static detectGaps(
+    requestedOptions: string[],
+    userRequest: string,
+    result: Partial<AnalysisResult>
+  ): Array<"esg" | "highlights" | "risks" | "summary"> {
+    const gaps: Array<"esg" | "highlights" | "risks" | "summary"> = [];
+    const lower = userRequest.toLowerCase();
+    const isNotFound = (s: string) =>
+      !s || s.length < 80 ||
+      /not (found|available|covered|mentioned|included|present)/i.test(s) ||
+      /no (esg|environmental|sustainability|specific|relevant)/i.test(s) ||
+      /unable to (find|locate|identify|extract)/i.test(s) ||
+      /insufficient|not provided|not disclosed/i.test(s);
+
+    if (requestedOptions.includes("esg") || lower.includes("esg") || lower.includes("environment")) {
+      if (isNotFound(result.esgSummary || "")) gaps.push("esg");
+    }
+    if (requestedOptions.includes("highlights") || lower.includes("highlight")) {
+      if (!result.highlights || result.highlights.length === 0) gaps.push("highlights");
+    }
+    if (requestedOptions.includes("risks") || lower.includes("risk")) {
+      if (!result.risks || result.risks.length === 0) gaps.push("risks");
+    }
+    return gaps;
+  }
+
+  /**
+   * For each detected gap, calls CIOAgent.synthesizeFromKnowledge to fill it
+   * using LLM training knowledge, with a clear AI-synthesis disclaimer.
+   */
+  private static async fillGapsWithKnowledge(
+    gaps: Array<"esg" | "highlights" | "risks" | "summary">,
+    result: Partial<AnalysisResult>,
+    input: { ticker?: string; options: string[]; userRequest?: string },
+    onEvent: (event: AgentEvent) => void
+  ): Promise<void> {
+    const companyName = result.company?.name || input.ticker || "Unknown Company";
+    const ticker = result.company?.ticker || input.ticker || "";
+    const knownContext = [result.summary, JSON.stringify(result.metrics || [])].filter(Boolean).join("\n").substring(0, 3000);
+
+    for (const gap of gaps) {
+      onEvent({ agent: "CIOAgent", status: `Synthesizing "${gap}" from LLM knowledge for ${companyName}...` });
+      try {
+        const synthesized = await CIOAgent.synthesizeFromKnowledge(companyName, ticker, gap, knownContext);
+        if (gap === "esg") result.esgSummary = synthesized;
+        else if (gap === "highlights") result.highlights = synthesized.split('\n').filter(l => l.trim().length > 0);
+        else if (gap === "risks") result.risks = synthesized.split('\n').filter(l => l.trim().length > 0);
+        else if (gap === "summary") result.summary = (result.summary ? result.summary + "\n\n" : "") + synthesized;
+        onEvent({ agent: "CIOAgent", status: `"${gap}" synthesis complete` });
+      } catch (err: any) {
+        onEvent({ agent: "CIOAgent", status: `"${gap}" synthesis failed: ${err.message}` });
+      }
+    }
   }
 
   private static describeAgentReturn(payload: any): string {
