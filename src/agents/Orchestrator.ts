@@ -3,6 +3,7 @@ import { FundamentalAgent } from "./FundamentalAgent";
 import { QuantAgent } from "./QuantAgent";
 import { PeerAgent } from "./PeerAgent";
 import { CIOAgent } from "./CIOAgent";
+import { OrchestratorToolCall, planOrchestratorToolCalls } from "./LLMProvider";
 
 export type AgentEvent = { agent: string; status: string };
 
@@ -12,45 +13,125 @@ export class OrchestratorAgent {
    * It delegates tasks to sub-agents without UI intervention.
    */
   static async runMasterAnalysis(
-    input: { ticker?: string; file?: File; options: string[] },
+    input: { ticker?: string; file?: File; options: string[]; userRequest?: string },
     onEvent: (event: AgentEvent) => void
   ): Promise<AnalysisResult> {
     onEvent({ agent: "Orchestrator", status: "Initializing Master Analysis" });
     
     let result: Partial<AnalysisResult> = {};
-    
-    // Dispatch to Quant Agent
-    if (input.ticker) {
-      onEvent({ agent: "Orchestrator", status: "Delegating Market Data to QuantAgent" });
-      const quantRes = await QuantAgent.runAutonomousAnalysis(input.ticker, input.options, (s) => onEvent({ agent: "QuantAgent", status: s.replace('QuantAgent: ', '') }));
-      result = { ...result, ...quantRes };
-    }
-    
-    // Dispatch to Fundamental Agent
-    if (input.file) {
-      onEvent({ agent: "Orchestrator", status: "Delegating Document parsing to FundamentalAgent" });
-      const fundamentalRes = await FundamentalAgent.runAutonomousAnalysis(input.file, input.options, (s) => onEvent({ agent: "FundamentalAgent", status: s.replace('FundamentalAgent: ', '') }));
-      result = { ...result, ...fundamentalRes };
-    }
-    
-    // Dispatch to Peer Agent
-    if (input.options.includes('competitors') && !result.competitors) {
-       onEvent({ agent: "Orchestrator", status: "Delegating contextual peer discovery to PeerAgent" });
-       onEvent({ agent: "PeerAgent", status: "Fetching real-time data for identified peers" });
-       const contextStr = result.summary || (input.ticker ? input.ticker : "Financial Document");
-       const peers = await PeerAgent.identifyPeers(contextStr);
-       result.competitors = peers;
-    }
+    const hasNaturalLanguageRequest = Boolean(input.userRequest?.trim());
+    const toolPlan = hasNaturalLanguageRequest
+      ? await this.planWithLLM(input, onEvent)
+      : this.planFromCheckboxFallback(input);
 
-    if (input.ticker && input.file) {
-      onEvent({ agent: "Orchestrator", status: "Dispatching to CIOAgent for synthesis" });
-      onEvent({ agent: "CIOAgent", status: "Cross-analyzing fundamentals with technical action" });
-      const verdict = await CIOAgent.crossAnalyze(result, result);
-      result.crossAnalysis = verdict;
+    onEvent({
+      agent: "Orchestrator",
+      status: `Tool plan: ${toolPlan.map((call) => call.name).join(" -> ") || "No tools selected"}`
+    });
+
+    for (const toolCall of toolPlan) {
+      switch (toolCall.name) {
+        case "fetch_market_data": {
+          const ticker = toolCall.arguments.ticker || input.ticker;
+          if (!ticker) {
+            onEvent({ agent: "QuantAgent", status: "Skipped: no ticker available" });
+            break;
+          }
+
+          onEvent({ agent: "Orchestrator", status: "Calling fetch_market_data -> QuantAgent" });
+          const quantRes = await QuantAgent.runAutonomousAnalysis(
+            ticker,
+            toolCall.arguments.options || input.options,
+            (s) => onEvent({ agent: "QuantAgent", status: s.replace('QuantAgent: ', '') })
+          );
+          result = { ...result, ...quantRes };
+          onEvent({ agent: "QuantAgent", status: this.describeAgentReturn(quantRes) });
+          break;
+        }
+
+        case "analyze_document": {
+          if (!input.file) {
+            onEvent({ agent: "FundamentalAgent", status: "Skipped: no document uploaded" });
+            break;
+          }
+
+          onEvent({ agent: "Orchestrator", status: "Calling analyze_document -> FundamentalAgent" });
+          const fundamentalRes = await FundamentalAgent.runAutonomousAnalysis(
+            input.file,
+            toolCall.arguments.options || input.options,
+            (s) => onEvent({ agent: "FundamentalAgent", status: s.replace('FundamentalAgent: ', '') })
+          );
+          result = { ...result, ...fundamentalRes };
+          onEvent({ agent: "FundamentalAgent", status: this.describeAgentReturn(fundamentalRes) });
+          break;
+        }
+
+        case "compare_peers": {
+          onEvent({ agent: "Orchestrator", status: "Calling compare_peers -> PeerAgent" });
+          const contextStr = toolCall.arguments.context || result.summary || result.company?.name || input.ticker || input.userRequest || "Financial Document";
+          const peers = await PeerAgent.identifyPeers(contextStr);
+          result.competitors = peers;
+          onEvent({ agent: "PeerAgent", status: `Returned ${peers.length} competitors` });
+          break;
+        }
+
+        case "synthesize_verdict": {
+          onEvent({ agent: "Orchestrator", status: "Calling synthesize_verdict -> CIOAgent" });
+          const verdict = await CIOAgent.crossAnalyze(result, result);
+          result.crossAnalysis = verdict;
+          onEvent({ agent: "CIOAgent", status: this.describeAgentReturn(verdict) });
+          break;
+        }
+      }
     }
     
     onEvent({ agent: "Orchestrator", status: "Analysis Complete" });
     return result as AnalysisResult;
+  }
+
+  private static async planWithLLM(
+    input: { ticker?: string; file?: File; options: string[]; userRequest?: string },
+    onEvent: (event: AgentEvent) => void
+  ): Promise<OrchestratorToolCall[]> {
+    onEvent({ agent: "Orchestrator", status: "Interpreting natural language request with function calling" });
+    try {
+      const llmPlan = await planOrchestratorToolCalls({
+        userRequest: input.userRequest || "",
+        ticker: input.ticker,
+        hasDocument: Boolean(input.file),
+        fallbackOptions: input.options
+      });
+
+      if (llmPlan.length > 0) return llmPlan;
+      onEvent({ agent: "Orchestrator", status: "LLM returned no tools; using checkbox fallback" });
+    } catch (error: any) {
+      onEvent({ agent: "Orchestrator", status: `Planner unavailable; using checkbox fallback (${error.message || "unknown error"})` });
+    }
+    return this.planFromCheckboxFallback(input);
+  }
+
+  private static planFromCheckboxFallback(input: { ticker?: string; file?: File; options: string[] }): OrchestratorToolCall[] {
+    const plan: OrchestratorToolCall[] = [];
+    if (input.ticker) {
+      plan.push({ name: "fetch_market_data", arguments: { ticker: input.ticker, options: input.options } });
+    }
+    if (input.file) {
+      plan.push({ name: "analyze_document", arguments: { options: input.options } });
+    }
+    if (input.options.includes('competitors')) {
+      plan.push({ name: "compare_peers", arguments: {} });
+    }
+    if (input.ticker && input.file) {
+      plan.push({ name: "synthesize_verdict", arguments: {} });
+    }
+    return plan;
+  }
+
+  private static describeAgentReturn(payload: any): string {
+    const keys = Object.keys(payload || {});
+    if (Array.isArray(payload)) return `Returned ${payload.length} records`;
+    if (payload?.summary) return `Returned ${keys.join(", ")}; summary: ${String(payload.summary).slice(0, 120)}`;
+    return `Returned ${keys.join(", ") || "no structured fields"}`;
   }
   /**
    * Main entry point for Ticker-only flows.

@@ -25,6 +25,7 @@ export interface AnalysisResult {
     ticker: string;
     rationale: string;
   }[];
+  crossAnalysis?: CrossAnalysisResult;
   summary: string;
   sentiment: 'Positive' | 'Neutral' | 'Negative';
 }

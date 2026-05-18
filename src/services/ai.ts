@@ -4,7 +4,7 @@ import { CIOAgent } from "../agents/CIOAgent";
 
 // Maintain a single entry point for analysis that truly leverages the multi-agent system autonomously.
 export async function runMasterAnalysis(
-  input: { ticker?: string; file?: File; options: string[] },
+  input: { ticker?: string; file?: File; options: string[]; userRequest?: string },
   onEvent: (event: AgentEvent) => void
 ): Promise<AnalysisResult> {
   return await OrchestratorAgent.runMasterAnalysis(input, onEvent);

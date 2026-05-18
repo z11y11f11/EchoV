@@ -14,6 +14,7 @@ export default function Uploader({ onUploadStarted, onAnalysisComplete, onError,
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [options, setOptions] = useState<string[]>(['highlights', 'risks', 'esg', 'competitors']);
+  const [userRequest, setUserRequest] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const availableOptions = [
@@ -41,7 +42,7 @@ export default function Uploader({ onUploadStarted, onAnalysisComplete, onError,
     onUploadStarted();
 
     try {
-      const analysis = await runMasterAnalysis({ file: file, options }, onAgentEvent);
+      const analysis = await runMasterAnalysis({ file: file, options, userRequest: userRequest.trim() || undefined }, onAgentEvent);
       onAnalysisComplete(analysis);
     } catch (err: any) {
       console.error(err);
@@ -139,6 +140,26 @@ export default function Uploader({ onUploadStarted, onAnalysisComplete, onError,
             </motion.div>
           )}
         </AnimatePresence>
+      </motion.div>
+
+      {/* Natural Language Orchestration */}
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.08 }}
+        className="bg-[#080a0f]/80 p-5 rounded-2xl shadow-sm border border-slate-800/80"
+      >
+        <div className="mb-3 text-left">
+          <h3 className="text-sm font-bold text-white uppercase tracking-wider text-[11px]">Orchestrator Request</h3>
+          <p className="text-xs text-slate-500 mt-1">Describe which agents to run; checkboxes below remain as fallback.</p>
+        </div>
+        <textarea
+          value={userRequest}
+          onChange={(e) => setUserRequest(e.target.value)}
+          placeholder="e.g. I only want valuation and ESG, skip peer comparison"
+          rows={3}
+          className="w-full resize-none rounded-lg border border-slate-800 bg-slate-950/80 px-3 py-2 text-sm text-slate-200 outline-none transition-colors placeholder:text-slate-600 focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/40"
+        />
       </motion.div>
 
       {/* Extraction Options UI */}

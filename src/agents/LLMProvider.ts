@@ -5,6 +5,17 @@ let aiInstance: GoogleGenAI | null = null;
 let openaiInstance: OpenAI | null = null;
 const OPENAI_MAX_PROMPT_CHARS = 18000;
 
+export type OrchestratorToolName = "analyze_document" | "fetch_market_data" | "compare_peers" | "synthesize_verdict";
+
+export interface OrchestratorToolCall {
+  name: OrchestratorToolName;
+  arguments: {
+    ticker?: string;
+    options?: string[];
+    context?: string;
+  };
+}
+
 export function getGemini(): GoogleGenAI {
   if (!aiInstance) {
     if (!process.env.GEMINI_API_KEY) {
@@ -102,6 +113,115 @@ async function runOpenAIFallback(prompt: string, schemaProperties: any, required
   const analysisText = response.output_text;
   if (!analysisText) throw new Error("Empty response from OpenAI fallback");
   return JSON.parse(analysisText);
+}
+
+export async function planOrchestratorToolCalls(input: {
+  userRequest: string;
+  ticker?: string;
+  hasDocument: boolean;
+  fallbackOptions: string[];
+}): Promise<OrchestratorToolCall[]> {
+  const openai = getOpenAI();
+  const response = await openai.chat.completions.create({
+    model: "gpt-4o",
+    temperature: 0,
+    messages: [
+      {
+        role: "system",
+        content: `You are the FinAgent V2 Orchestrator. Decide which tools to call and in what order based only on the user's request and available inputs.
+Available tools map to agents:
+- analyze_document: FundamentalAgent for uploaded PDFs, financial metrics, highlights, risks, ESG.
+- fetch_market_data: QuantAgent for ticker market data, valuation, price, ratios.
+- compare_peers: PeerAgent for competitor discovery and peer comparison.
+- synthesize_verdict: CIOAgent for final investment verdict or cross-analysis after other agent outputs.
+
+Rules:
+- Call analyze_document only if a document is available and the request needs report, fundamental, ESG, risk, or highlight analysis.
+- Call fetch_market_data if a ticker is available and the request needs valuation, market data, quantitative metrics, price, ratios, or a final verdict.
+- Call compare_peers only when peer, competitor, industry comparison, or benchmark analysis is requested.
+- Call synthesize_verdict when the user asks for a verdict, recommendation, conclusion, synthesis, or when multiple prior tools should be reconciled.
+- Respect skip/exclude requests. If the user says skip peers, do not call compare_peers.
+- If the request is vague, use the fallback options as the user's checkbox fallback.`
+      },
+      {
+        role: "user",
+        content: JSON.stringify(input)
+      }
+    ],
+    tools: [
+      {
+        type: "function",
+        function: {
+          name: "analyze_document",
+          description: "Run FundamentalAgent on the uploaded financial report PDF.",
+          parameters: {
+            type: "object",
+            properties: {
+              options: {
+                type: "array",
+                items: { type: "string", enum: ["highlights", "risks", "esg"] }
+              }
+            }
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "fetch_market_data",
+          description: "Run QuantAgent to fetch market data and perform valuation or quantitative analysis.",
+          parameters: {
+            type: "object",
+            properties: {
+              ticker: { type: "string" },
+              options: {
+                type: "array",
+                items: { type: "string", enum: ["highlights", "risks", "esg", "competitors"] }
+              }
+            },
+            required: ["ticker"]
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "compare_peers",
+          description: "Run PeerAgent to identify and compare competitors.",
+          parameters: {
+            type: "object",
+            properties: {
+              context: { type: "string" }
+            }
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "synthesize_verdict",
+          description: "Run CIOAgent to synthesize prior agent outputs into a verdict or divergence analysis.",
+          parameters: {
+            type: "object",
+            properties: {}
+          }
+        }
+      }
+    ],
+    tool_choice: "auto"
+  } as any);
+
+  const toolCalls = response.choices[0]?.message?.tool_calls || [];
+  return toolCalls
+    .map((toolCall: any) => {
+      const name = toolCall.function?.name as OrchestratorToolName;
+      if (!["analyze_document", "fetch_market_data", "compare_peers", "synthesize_verdict"].includes(name)) return null;
+      return {
+        name,
+        arguments: JSON.parse(toolCall.function?.arguments || "{}")
+      };
+    })
+    .filter(Boolean) as OrchestratorToolCall[];
 }
 
 export async function runGenerativeAI(prompt: string, schemaProperties: any, requiredFields: string[], fileBase64?: string): Promise<any> {
