@@ -7,6 +7,8 @@ export interface Metric {
   label: string;
   value: string;
   trend: 'up' | 'down' | 'flat';
+  /** Which agent produced this metric — used for grouping in the dashboard */
+  source?: 'fundamental' | 'market';
 }
 
 export interface AnalysisResult {

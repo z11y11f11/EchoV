@@ -104,6 +104,11 @@ export class FundamentalAgent {
       ${text.substring(0, 18000)}
     `;
   
-    return await runGenerativeAI(prompt, schemaProperties, requiredFields, fileBase64);
+    const result = await runGenerativeAI(prompt, schemaProperties, requiredFields, fileBase64);
+    // Tag every metric so the dashboard can group them separately from market data
+    if (result.metrics) {
+      result.metrics = result.metrics.map((m: any) => ({ ...m, source: 'fundamental' }));
+    }
+    return result;
   }
 }

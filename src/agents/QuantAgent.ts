@@ -116,6 +116,10 @@ export class QuantAgent {
     if (!parsed.summary.includes("Analysis based on market data only")) {
       parsed.summary += "\\n\\nAnalysis based on market data only — upload annual report for deeper insights.";
     }
+    // Tag every metric so the dashboard can group them separately from report data
+    if (parsed.metrics) {
+      parsed.metrics = parsed.metrics.map((m: any) => ({ ...m, source: 'market' }));
+    }
     return parsed;
   }
 }

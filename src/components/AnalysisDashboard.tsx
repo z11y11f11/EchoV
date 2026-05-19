@@ -471,25 +471,14 @@ export default function AnalysisDashboard({ data, isLoading = false, onReset, on
       <div className="pdf-section">
         <CollapsibleSection title="Key Performance Indicators" icon={<Activity className="w-5 h-5 text-blue-500" />} isOpen={sections.metrics} onToggle={() => toggleSection('metrics')}>
           {isLoading && !metrics.length ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-              {Array.from({ length: 8 }).map((_, i) => <SkeletonCard key={i} />)}
+            <div className="space-y-4">
+              <div className="h-4 w-40 bg-slate-800 rounded animate-pulse" />
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                {Array.from({ length: 6 }).map((_, i) => <SkeletonCard key={i} />)}
+              </div>
             </div>
           ) : metrics.length > 0 ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-              {metrics.map((metric, idx) => (
-                <div key={idx} className="bg-[#080a0f]/80 p-5 rounded-xl border border-slate-800/80 group hover:border-blue-500/30 transition-colors shadow-lg">
-                  <div className="flex justify-between items-start mb-2">
-                    <span className="text-sm font-bold text-slate-400 font-display tracking-tight">{metric.label}</span>
-                    <div className={`p-1.5 rounded-lg border ${metric.trend === 'up' ? 'bg-emerald-950/30 text-emerald-400 border-emerald-500/20' : metric.trend === 'down' ? 'bg-rose-950/30 text-rose-400 border-rose-500/20' : 'bg-slate-800/50 text-slate-400 border-slate-700/50'}`}>
-                      {metric.trend === 'up' ? <TrendingUp className="w-4 h-4" /> : metric.trend === 'down' ? <TrendingDown className="w-4 h-4" /> : <Minus className="w-4 h-4" />}
-                    </div>
-                  </div>
-                  <div className="text-2xl font-black text-white font-mono group-hover:text-blue-400 transition-colors tracking-tight">
-                    {metric.value}
-                  </div>
-                </div>
-              ))}
-            </div>
+            <MetricsGrouped metrics={metrics} />
           ) : (
             <p className="text-slate-500 text-sm italic">No metrics available.</p>
           )}
@@ -612,6 +601,109 @@ export default function AnalysisDashboard({ data, isLoading = false, onReset, on
       )}
 
     </motion.div>
+  );
+}
+
+// ── Metric categorisation helpers ────────────────────────────────────────────
+
+const VALUATION_KEYS = ['p/e', 'pe ratio', 'forward p/e', 'price-to-book', 'p/b', 'peg', 'ev/ebitda', 'price to book'];
+const PROFITABILITY_KEYS = ['margin', 'roe', 'return on equity', 'revenue growth', 'earnings growth', 'debt-to-equity', 'debt to equity', 'free cash flow', 'fcf', 'dividend'];
+// everything else (revenue, net income, market cap, eps, …) falls into "market overview"
+
+function metricSubGroup(label: string): 'valuation' | 'profitability' | 'overview' {
+  const l = label.toLowerCase();
+  if (VALUATION_KEYS.some(k => l.includes(k))) return 'valuation';
+  if (PROFITABILITY_KEYS.some(k => l.includes(k))) return 'profitability';
+  return 'overview';
+}
+
+function TrendIcon({ trend }: { trend: string }) {
+  if (trend === 'up') return <TrendingUp className="w-3.5 h-3.5 text-emerald-400" />;
+  if (trend === 'down') return <TrendingDown className="w-3.5 h-3.5 text-rose-400" />;
+  return <Minus className="w-3.5 h-3.5 text-slate-500" />;
+}
+
+function MetricRow({ metric }: { metric: any }) {
+  const trendBg = metric.trend === 'up' ? 'text-emerald-400' : metric.trend === 'down' ? 'text-rose-400' : 'text-slate-500';
+  return (
+    <div className="flex items-center justify-between py-2.5 border-b border-slate-800/60 last:border-0 group">
+      <span className="text-sm text-slate-400 group-hover:text-slate-300 transition-colors">{metric.label}</span>
+      <div className="flex items-center gap-2">
+        <span className={`text-sm font-bold font-mono ${trendBg}`}>{metric.value}</span>
+        <TrendIcon trend={metric.trend} />
+      </div>
+    </div>
+  );
+}
+
+function MetricPanel({ title, accent, metrics }: { title: string; accent: string; metrics: any[] }) {
+  if (!metrics.length) return null;
+  return (
+    <div className={`rounded-xl border ${accent} bg-[#0a0d14]/60 p-4`}>
+      <div className={`text-[10px] font-bold uppercase tracking-widest mb-3 ${accent.includes('emerald') ? 'text-emerald-400' : accent.includes('blue') ? 'text-blue-400' : accent.includes('amber') ? 'text-amber-400' : 'text-indigo-400'}`}>
+        {title}
+      </div>
+      {metrics.map((m, i) => <MetricRow key={i} metric={m} />)}
+    </div>
+  );
+}
+
+function MetricsGrouped({ metrics }: { metrics: any[] }) {
+  const fundamental = metrics.filter(m => m.source === 'fundamental');
+  const market = metrics.filter(m => m.source === 'market' || !m.source);
+
+  const valuation = market.filter(m => metricSubGroup(m.label) === 'valuation');
+  const profitability = market.filter(m => metricSubGroup(m.label) === 'profitability');
+  const overview = market.filter(m => metricSubGroup(m.label) === 'overview');
+
+  return (
+    <div className="space-y-5">
+      {/* ── Section A: From Annual Report ─────────────────────────────── */}
+      {fundamental.length > 0 && (
+        <div>
+          <div className="flex items-center gap-2 mb-3">
+            <div className="w-1 h-4 rounded-full bg-emerald-500" />
+            <span className="text-xs font-bold text-emerald-400 uppercase tracking-widest">From Annual Report</span>
+            <span className="text-[10px] text-slate-600 ml-1">· FundamentalAgent</span>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {fundamental.map((m, i) => (
+              <div key={i} className="bg-[#080a0f]/80 p-4 rounded-xl border border-emerald-900/30 group hover:border-emerald-500/30 transition-colors">
+                <div className="flex justify-between items-start mb-1.5">
+                  <span className="text-xs font-semibold text-slate-400">{m.label}</span>
+                  <TrendIcon trend={m.trend} />
+                </div>
+                <div className="text-xl font-black text-white font-mono tracking-tight group-hover:text-emerald-400 transition-colors">
+                  {m.value}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── Section B + C: Market Data ────────────────────────────────── */}
+      {market.length > 0 && (
+        <div>
+          <div className="flex items-center gap-2 mb-3">
+            <div className="w-1 h-4 rounded-full bg-blue-500" />
+            <span className="text-xs font-bold text-blue-400 uppercase tracking-widest">Live Market Data</span>
+            <span className="text-[10px] text-slate-600 ml-1">· QuantAgent</span>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {overview.length > 0 && (
+              <MetricPanel title="Market Overview" accent="border-blue-900/40" metrics={overview} />
+            )}
+            {valuation.length > 0 && (
+              <MetricPanel title="Valuation Multiples" accent="border-amber-900/40" metrics={valuation} />
+            )}
+            {profitability.length > 0 && (
+              <MetricPanel title="Profitability & Balance" accent="border-indigo-900/40" metrics={profitability} />
+            )}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
