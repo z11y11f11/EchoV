@@ -652,19 +652,39 @@ function MetricsGrouped({ metrics }: { metrics: any[] }) {
   const fundamental = metrics.filter(m => m.source === 'fundamental');
   const market = metrics.filter(m => m.source === 'market' || !m.source);
 
-  const valuation = market.filter(m => metricSubGroup(m.label) === 'valuation');
+  const valuation    = market.filter(m => metricSubGroup(m.label) === 'valuation');
   const profitability = market.filter(m => metricSubGroup(m.label) === 'profitability');
-  const overview = market.filter(m => metricSubGroup(m.label) === 'overview');
+  const overview     = market.filter(m => metricSubGroup(m.label) === 'overview');
+
+  // Detect reporting currency from fundamental metric values
+  const allFundamentalText = fundamental.map(m => m.value).join(' ');
+  const reportCurrency =
+    /RMB|rmb|人民币/.test(allFundamentalText) ? 'CNY / RMB' :
+    /CNY|cny/.test(allFundamentalText)         ? 'CNY' :
+    /USD|\$/.test(allFundamentalText)           ? 'USD' :
+    /EUR|€/.test(allFundamentalText)            ? 'EUR' :
+    /GBP|£/.test(allFundamentalText)            ? 'GBP' :
+    null;
 
   return (
     <div className="space-y-5">
       {/* ── Section A: From Annual Report ─────────────────────────────── */}
       {fundamental.length > 0 && (
         <div>
-          <div className="flex items-center gap-2 mb-3">
-            <div className="w-1 h-4 rounded-full bg-emerald-500" />
+          <div className="flex items-center gap-2 mb-3 flex-wrap">
+            <div className="w-1 h-4 rounded-full bg-emerald-500 shrink-0" />
             <span className="text-xs font-bold text-emerald-400 uppercase tracking-widest">From Annual Report</span>
-            <span className="text-[10px] text-slate-600 ml-1">· FundamentalAgent</span>
+            <span className="text-[10px] text-slate-600">· FundamentalAgent</span>
+            {reportCurrency && (
+              <span className="ml-1 px-2 py-0.5 rounded text-[10px] font-bold bg-amber-950/40 border border-amber-700/40 text-amber-400 uppercase tracking-wider">
+                Reported in {reportCurrency}
+              </span>
+            )}
+            {reportCurrency && reportCurrency.includes('CNY') && (
+              <span className="text-[10px] text-slate-600 italic">
+                · Chinese companies file financial statements in CNY regardless of listing currency
+              </span>
+            )}
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {fundamental.map((m, i) => (
@@ -688,7 +708,7 @@ function MetricsGrouped({ metrics }: { metrics: any[] }) {
           <div className="flex items-center gap-2 mb-3">
             <div className="w-1 h-4 rounded-full bg-blue-500" />
             <span className="text-xs font-bold text-blue-400 uppercase tracking-widest">Live Market Data</span>
-            <span className="text-[10px] text-slate-600 ml-1">· QuantAgent</span>
+            <span className="text-[10px] text-slate-600 ml-1">· QuantAgent · HKD</span>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {overview.length > 0 && (
