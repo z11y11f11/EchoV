@@ -3,7 +3,12 @@ import OpenAI from "openai";
 
 let aiInstance: GoogleGenAI | null = null;
 let openaiInstance: OpenAI | null = null;
+let featherlessInstance: OpenAI | null = null;
 const OPENAI_MAX_PROMPT_CHARS = 18000;
+
+// Featherless uses OpenAI-compatible API — any model from their catalog can be set
+// via FEATHERLESS_MODEL env var; falls back to a reliable instruction-following model.
+const FEATHERLESS_MODEL = process.env.FEATHERLESS_MODEL || 'mistralai/Mistral-7B-Instruct-v0.3';
 
 export type OrchestratorToolName = "analyze_document" | "fetch_market_data" | "compare_peers" | "synthesize_verdict" | "synthesize_knowledge";
 
@@ -39,6 +44,68 @@ function getOpenAI(): OpenAI {
     });
   }
   return openaiInstance;
+}
+
+/**
+ * Returns an OpenAI-compatible client pointed at the Featherless API.
+ * Requires FEATHERLESS_API_KEY in environment.
+ * Model is controlled by FEATHERLESS_MODEL env var (default: mistralai/Mistral-7B-Instruct-v0.3).
+ */
+function getFeatherless(): OpenAI {
+  if (!featherlessInstance) {
+    if (!process.env.FEATHERLESS_API_KEY) {
+      throw new Error("FEATHERLESS_API_KEY is not set.");
+    }
+    featherlessInstance = new OpenAI({
+      apiKey: process.env.FEATHERLESS_API_KEY,
+      baseURL: 'https://api.featherless.ai/v1',
+      dangerouslyAllowBrowser: true,
+    });
+  }
+  return featherlessInstance;
+}
+
+/**
+ * Runs a structured-JSON analysis via Featherless (OpenAI-compatible).
+ * Uses chat.completions with json_object response_format and a schema hint in the system prompt.
+ * Note: conductDialogueStep / planOrchestratorToolCalls always use OpenAI (need function calling).
+ */
+async function runFeatherlessFallback(
+  prompt: string,
+  schemaProperties: any,
+  requiredFields: string[],
+  fileBase64?: string
+): Promise<any> {
+  if (fileBase64) {
+    console.info("Featherless provider: PDF attachment omitted (text-only model).");
+  }
+
+  const schemaHint = JSON.stringify(
+    { type: 'object', required: requiredFields, properties: toJsonSchema(schemaProperties) },
+    null, 2
+  ).substring(0, 4000); // keep system prompt lean
+
+  const client = getFeatherless();
+  const response = await client.chat.completions.create({
+    model: FEATHERLESS_MODEL,
+    temperature: 0.1,
+    max_tokens: 4000,
+    response_format: { type: 'json_object' } as any,
+    messages: [
+      {
+        role: 'system',
+        content: `You are a structured financial analysis assistant. Always respond with valid JSON that strictly matches this schema:\n${schemaHint}`
+      },
+      {
+        role: 'user',
+        content: trimForOpenAI(prompt)
+      }
+    ]
+  });
+
+  const text = response.choices[0]?.message?.content;
+  if (!text) throw new Error('Empty response from Featherless');
+  return JSON.parse(text);
 }
 
 function isGeminiFallbackError(error: unknown): boolean {
@@ -334,30 +401,48 @@ Rules:
     .filter(Boolean) as OrchestratorToolCall[];
 }
 
+/**
+ * Provider priority for structured JSON generation:
+ *   1. Featherless  — if FEATHERLESS_API_KEY is set (optional, user-configured)
+ *   2. OpenAI       — if OPENAI_API_KEY is set (default)
+ *   3. Gemini       — if GEMINI_API_KEY is set; falls back to OpenAI on auth/rate errors
+ *
+ * conductDialogueStep / planOrchestratorToolCalls always use OpenAI (need function calling).
+ */
 export async function runGenerativeAI(prompt: string, schemaProperties: any, requiredFields: string[], fileBase64?: string): Promise<any> {
+  // ── 1. Featherless (optional) ────────────────────────────────────────────
+  if (process.env.FEATHERLESS_API_KEY) {
+    try {
+      console.info(`[LLM] Using Featherless provider (${FEATHERLESS_MODEL})`);
+      return await runFeatherlessFallback(prompt, schemaProperties, requiredFields, fileBase64);
+    } catch (err: any) {
+      console.warn(`[LLM] Featherless failed (${err.message}), falling back to OpenAI/Gemini`);
+    }
+  }
+
+  // ── 2. OpenAI (default) ──────────────────────────────────────────────────
   if (process.env.OPENAI_API_KEY) {
+    console.info("[LLM] Using OpenAI provider (gpt-4o)");
     return await runOpenAIFallback(prompt, schemaProperties, requiredFields, fileBase64);
   }
 
+  // ── 3. Gemini (with OpenAI fallback on failure) ──────────────────────────
   if (!process.env.GEMINI_API_KEY) {
+    // No key at all — last resort: try OpenAI anyway (will throw its own error if missing)
     return await runOpenAIFallback(prompt, schemaProperties, requiredFields, fileBase64);
   }
 
   try {
+    console.info("[LLM] Using Gemini provider (gemini-2.5-flash)");
     const gemini = getGemini();
 
     const parts: any[] = [{ text: prompt }];
     if (fileBase64) {
-      parts.push({
-        inlineData: {
-          data: fileBase64,
-          mimeType: "application/pdf"
-        }
-      });
+      parts.push({ inlineData: { data: fileBase64, mimeType: "application/pdf" } });
     }
 
     const response = await gemini.models.generateContent({
-      model: "gemini-2.5-flash", // Use stable model identifier
+      model: "gemini-2.5-flash",
       contents: [{ parts }],
       config: {
         responseMimeType: "application/json",
@@ -374,7 +459,7 @@ export async function runGenerativeAI(prompt: string, schemaProperties: any, req
     return JSON.parse(analysisText);
   } catch (error) {
     if (isGeminiFallbackError(error)) {
-      console.warn("Gemini unavailable, switching to OpenAI fallback:", (error as any)?.message || error);
+      console.warn("[LLM] Gemini unavailable, switching to OpenAI fallback:", (error as any)?.message || error);
       return await runOpenAIFallback(prompt, schemaProperties, requiredFields, fileBase64);
     }
     throw error;

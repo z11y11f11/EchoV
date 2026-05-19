@@ -90,6 +90,16 @@ export class QuantAgent {
       - Dividend Yield (%)
       - Market Cap
       Use 'up' trend for positive values vs sector average, 'down' for concerning values, 'flat' for neutral.
+
+      METRIC VALUE FORMATTING — follow exactly:
+      - Determine the currency from marketData.summaryDetail.currency (e.g. HKD, USD, EUR).
+      - Financial figures (Revenue, Net Income, Market Cap, Free Cash Flow, EPS): include the currency code and scale:
+        • "B" = billions, "M" = millions.  Format: "<number><scale> <ISO_CODE>" e.g. "457.3B HKD", "41.6B HKD", "790.9B HKD", "1.79 HKD".
+      - Ratios and percentages (P/E, P/B, PEG, EV/EBITDA, Margins, ROE, Growth, D/E, Dividend Yield):
+        • Ratios: append "x" — e.g. "17.1x", "2.59x", "18.8x".
+        • Percentages: append "%" — e.g. "8.48%", "18.25%", "7.3%", "0.00%".
+        • D/E Ratio: plain number or "x" — e.g. "15.71x".
+      - Do NOT mix formats. Be consistent throughout.
     `;
     
     // Add optional requests if the caller asks for it directly from quant

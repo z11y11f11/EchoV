@@ -99,7 +99,16 @@ export class FundamentalAgent {
       You are an expert fundamental financial analyst. Analyze the provided financial report (which may be attached as a PDF or provided as text below) and provide a structured analysis.
       If a PDF is attached, prioritize extracting information from the PDF directly.
       ${requestedSections}
-      
+
+      METRIC FORMATTING RULES — follow exactly:
+      - Identify the report's functional currency (the currency the financial statements are prepared in, e.g. CNY for Chinese companies, USD for US companies, HKD if explicitly stated).
+      - Every financial metric value MUST include the 3-letter ISO currency code AND a consistent scale suffix:
+        • Use "B" for billions, "M" for millions, "K" for thousands.
+        • Format: "<number><scale> <ISO_CODE>" — e.g. "457.3B CNY", "33.1B CNY", "12.5M USD", "8.3B HKD".
+      - For ratios, percentages, and unit-less metrics (P/E, margin %, growth %, EPS): no currency — just the number with % or "x" as appropriate, e.g. "8.48%", "17.1x", "1.79".
+      - Do NOT mix scales within the same report (if revenue is in billions, profit should also be in billions).
+      - Do NOT write "Million RMB" or "百万" — always use the short form above.
+
       Fallback Report Text:
       ${text.substring(0, 18000)}
     `;
