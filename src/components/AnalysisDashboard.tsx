@@ -647,7 +647,7 @@ function EsgText({ text }: { text: string }) {
       {paragraphs.map((para, pi) => {
         // Split paragraph into bold / normal segments
         const parts = para.split(/(\*\*[^*]+\*\*)/g);
-        const isAiDisclaimer = para.includes('[AI Synthesis');
+        const isAiDisclaimer = para.includes('[AI Synthesis') || para.includes('[Based on publicly available');
         return (
           <p key={pi} className={`text-sm leading-relaxed ${isAiDisclaimer ? 'text-slate-500 italic border-t border-slate-800 pt-3 mt-2' : 'text-slate-300'}`}>
             {parts.map((part, i) =>

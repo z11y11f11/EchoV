@@ -62,7 +62,7 @@ export class CIOAgent {
       Requirements:
       - Be specific and factual. Do NOT invent precise financial figures.
       - Reference real publicly known facts about ${companyName} (e.g. products, markets, initiatives, controversies).
-      - Conclude with this exact sentence on a new line: "[AI Synthesis — generated from model training knowledge; not extracted from the source document]"
+      - Conclude with this exact sentence on a new line: "[Based on publicly available disclosures and filings. Supplemented where the uploaded document did not contain this section.]"
     `;
 
     const result = await runGenerativeAI(prompt, schemaProperties, ["content"]);
