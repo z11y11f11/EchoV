@@ -5,7 +5,7 @@ let aiInstance: GoogleGenAI | null = null;
 let openaiInstance: OpenAI | null = null;
 const OPENAI_MAX_PROMPT_CHARS = 18000;
 
-export type OrchestratorToolName = "analyze_document" | "fetch_market_data" | "compare_peers" | "synthesize_verdict";
+export type OrchestratorToolName = "analyze_document" | "fetch_market_data" | "compare_peers" | "synthesize_verdict" | "synthesize_knowledge";
 
 export interface OrchestratorToolCall {
   name: OrchestratorToolName;
@@ -13,6 +13,8 @@ export interface OrchestratorToolCall {
     ticker?: string;
     options?: string[];
     context?: string;
+    topic?: string;
+    companyName?: string;
   };
 }
 
@@ -128,20 +130,22 @@ export async function planOrchestratorToolCalls(input: {
     messages: [
       {
         role: "system",
-        content: `You are the FinAgent V2 Orchestrator. Decide which tools to call and in what order based only on the user's request and available inputs.
+        content: `You are the FinAgent V2 Orchestrator. Decide which tools to call and in what order based on the user's request and available inputs.
 Available tools map to agents:
-- analyze_document: FundamentalAgent for uploaded PDFs, financial metrics, highlights, risks, ESG.
-- fetch_market_data: QuantAgent for ticker market data, valuation, price, ratios.
-- compare_peers: PeerAgent for competitor discovery and peer comparison.
-- synthesize_verdict: CIOAgent for final investment verdict or cross-analysis after other agent outputs.
+- analyze_document: FundamentalAgent — extracts highlights, risks, ESG, metrics from an uploaded PDF.
+- fetch_market_data: QuantAgent — fetches live market data, valuation multiples, price, ratios for a ticker.
+- compare_peers: PeerAgent — discovers competitors and benchmarks them.
+- synthesize_verdict: CIOAgent — reconciles multiple agent outputs into a final investment verdict.
+- synthesize_knowledge: CIOAgent — generates analysis (esg/highlights/risks/summary) from LLM training knowledge when source documents are insufficient or the topic is unlikely to be in a financial PDF (e.g. detailed ESG breakdown, competitive risks, governance analysis).
 
 Rules:
-- Call analyze_document only if a document is available and the request needs report, fundamental, ESG, risk, or highlight analysis.
-- Call fetch_market_data if a ticker is available and the request needs valuation, market data, quantitative metrics, price, ratios, or a final verdict.
-- Call compare_peers only when peer, competitor, industry comparison, or benchmark analysis is requested.
-- Call synthesize_verdict when the user asks for a verdict, recommendation, conclusion, synthesis, or when multiple prior tools should be reconciled.
+- Call analyze_document only if a document is available and the request needs report/fundamental/ESG/risk/highlight analysis.
+- Call fetch_market_data if a ticker is available and the request needs valuation, market data, quantitative metrics, price, or ratios.
+- Call compare_peers only when peer/competitor/industry comparison is requested.
+- Call synthesize_verdict when the user asks for a verdict, recommendation, or synthesis across multiple sources.
+- Call synthesize_knowledge AFTER analyze_document when: (1) the requested topic is ESG/highlights/risks and financial reports often lack this data, OR (2) you anticipate the document may not cover the requested topic in depth. Pass the company name and topic.
 - Respect skip/exclude requests. If the user says skip peers, do not call compare_peers.
-- If the request is vague, use the fallback options as the user's checkbox fallback.`
+- If the request is vague, use the fallback options.`
       },
       {
         role: "user",
@@ -206,6 +210,22 @@ Rules:
             properties: {}
           }
         }
+      },
+      {
+        type: "function",
+        function: {
+          name: "synthesize_knowledge",
+          description: "Use CIOAgent's LLM training knowledge to generate analysis on a topic that was not found in the source document or market data. Use this as a fallback when a requested section (esg, highlights, risks, summary) could not be extracted from available sources.",
+          parameters: {
+            type: "object",
+            required: ["topic", "companyName"],
+            properties: {
+              topic: { type: "string", enum: ["esg", "highlights", "risks", "summary"] },
+              companyName: { type: "string" },
+              context: { type: "string", description: "Any known context about the company to guide synthesis" }
+            }
+          }
+        }
       }
     ],
     tool_choice: "auto"
@@ -215,7 +235,7 @@ Rules:
   return toolCalls
     .map((toolCall: any) => {
       const name = toolCall.function?.name as OrchestratorToolName;
-      if (!["analyze_document", "fetch_market_data", "compare_peers", "synthesize_verdict"].includes(name)) return null;
+      if (!["analyze_document", "fetch_market_data", "compare_peers", "synthesize_verdict", "synthesize_knowledge"].includes(name)) return null;
       return {
         name,
         arguments: JSON.parse(toolCall.function?.arguments || "{}")
