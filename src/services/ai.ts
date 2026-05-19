@@ -22,3 +22,15 @@ export async function crossAnalyze(reportAnalysis: AnalysisResult, marketData: a
 export async function resolveYahooTickersWithAI(query: string): Promise<string> {
   return await OrchestratorAgent.resolvePeerTicker(query);
 }
+
+// Mode B: parallel FundamentalAgent + QuantAgent, then CIOAgent cross-analysis
+export async function runParallelAnalysis(
+  ticker: string,
+  file: File,
+  options: string[],
+  onEvent: (event: AgentEvent) => void
+): Promise<AnalysisResult> {
+  return await OrchestratorAgent.runParallelAnalysis(ticker, file, options, onEvent);
+}
+
+export type { AgentEvent };

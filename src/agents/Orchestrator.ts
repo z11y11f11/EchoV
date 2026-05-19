@@ -220,6 +220,81 @@ export class OrchestratorAgent {
     return `Returned ${keys.join(", ") || "no structured fields"}`;
   }
   /**
+   * Mode B: Run FundamentalAgent + QuantAgent in parallel, then CIOAgent cross-analysis.
+   * Used when the user provides both a PDF report and a ticker symbol.
+   */
+  static async runParallelAnalysis(
+    ticker: string,
+    file: File,
+    options: string[],
+    onEvent: (event: AgentEvent) => void
+  ): Promise<AnalysisResult> {
+    onEvent({ agent: "Orchestrator", status: "Dispatching FundamentalAgent and QuantAgent in parallel..." });
+
+    const [fundamentalSettled, quantSettled] = await Promise.allSettled([
+      FundamentalAgent.runAutonomousAnalysis(file, options,
+        (s) => onEvent({ agent: "FundamentalAgent", status: s.replace("FundamentalAgent: ", "") })),
+      QuantAgent.runAutonomousAnalysis(ticker, options,
+        (s) => onEvent({ agent: "QuantAgent", status: s.replace("QuantAgent: ", "") }))
+    ]);
+
+    let result: Partial<AnalysisResult> = {};
+
+    if (fundamentalSettled.status === "fulfilled") {
+      result = { ...result, ...fundamentalSettled.value };
+      onEvent({ agent: "FundamentalAgent", status: "Complete" });
+    } else {
+      onEvent({ agent: "FundamentalAgent", status: `Failed: ${(fundamentalSettled as any).reason?.message}` });
+    }
+
+    if (quantSettled.status === "fulfilled") {
+      const q = quantSettled.value;
+      // Supplement: keep fundamental company identity, merge metrics without duplicates
+      if (!result.company) result.company = q.company;
+      const existingLabels = new Set((result.metrics || []).map((m: any) => m.label));
+      const newMetrics = (q.metrics || []).filter((m: any) => !existingLabels.has(m.label));
+      result.metrics = [...(result.metrics || []), ...newMetrics];
+      onEvent({ agent: "QuantAgent", status: "Complete" });
+    } else {
+      onEvent({ agent: "QuantAgent", status: `Failed: ${(quantSettled as any).reason?.message}` });
+    }
+
+    // Peer comparison
+    if (options.includes("competitors")) {
+      try {
+        onEvent({ agent: "PeerAgent", status: "Identifying peers..." });
+        const ctx = result.summary || result.company?.name || ticker;
+        result.competitors = await PeerAgent.identifyPeers(ctx);
+        onEvent({ agent: "PeerAgent", status: `Found ${result.competitors.length} peers` });
+      } catch (e: any) {
+        onEvent({ agent: "PeerAgent", status: `Failed: ${e.message}` });
+      }
+    }
+
+    // CIO cross-analysis
+    try {
+      onEvent({ agent: "CIOAgent", status: "Running cross-analysis..." });
+      result.crossAnalysis = await CIOAgent.crossAnalyze(
+        fundamentalSettled.status === "fulfilled" ? fundamentalSettled.value : {},
+        quantSettled.status === "fulfilled" ? quantSettled.value : {}
+      );
+      onEvent({ agent: "CIOAgent", status: "Cross-analysis complete" });
+    } catch (e: any) {
+      onEvent({ agent: "CIOAgent", status: `Failed: ${e.message}` });
+    }
+
+    // Gap reflection
+    const gaps = this.detectGaps(options, "", result);
+    if (gaps.length > 0) {
+      onEvent({ agent: "Orchestrator", status: `Reflection: gaps [${gaps.join(", ")}] — synthesising from LLM knowledge...` });
+      await this.fillGapsWithKnowledge(gaps, result, { options }, onEvent);
+    }
+
+    onEvent({ agent: "Orchestrator", status: "Analysis Complete" });
+    return result as AnalysisResult;
+  }
+
+  /**
    * Main entry point for Ticker-only flows.
    */
   static async startQuantFlow(ticker: string, marketData: any, options: string[]): Promise<AnalysisResult> {

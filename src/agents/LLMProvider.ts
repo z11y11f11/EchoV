@@ -117,6 +117,96 @@ async function runOpenAIFallback(prompt: string, schemaProperties: any, required
   return JSON.parse(analysisText);
 }
 
+// ─── Mode C: LLM-driven dialogue ────────────────────────────────────────────
+
+export type DialogueStep =
+  | { type: 'question'; content: string }
+  | { type: 'plan'; ticker: string; companyName: string; aspects: string[]; needsPDF: boolean; planSummary: string };
+
+/**
+ * Takes the full conversation history and returns either a follow-up question
+ * or a confirmed analysis plan, using OpenAI function calling.
+ */
+export async function conductDialogueStep(
+  messages: Array<{ role: 'user' | 'assistant'; content: string }>
+): Promise<DialogueStep> {
+  const openai = getOpenAI();
+
+  const response = await openai.chat.completions.create({
+    model: 'gpt-4o',
+    temperature: 0.4,
+    messages: [
+      {
+        role: 'system',
+        content: `You are FinAgent Orchestrator — an autonomous multi-agent investment analysis system.
+You specialise in:
+- Financial report analysis (PDF annual reports, earnings releases)
+- Listed company market data: valuation multiples, KPIs, peer comparison
+- ESG profiles, investment highlights, strategic risks
+
+Your role in this dialogue:
+- Ask ONE focused question at a time to understand what the user wants to analyse.
+- Collect: (1) company name or ticker symbol, (2) whether they have a PDF financial report, (3) which aspects matter most (valuation, ESG, risks, peer comparison).
+- Be conversational, concise, and professional.
+- Do NOT ask for information you already have. Do NOT ask multiple questions at once.
+- After 2–4 exchanges, when you have enough information, call confirm_plan.
+- If the user already gave you a ticker AND their desired aspects (or said "all"/"everything"), call confirm_plan immediately.`
+      },
+      ...messages
+    ],
+    tools: [
+      {
+        type: 'function',
+        function: {
+          name: 'ask_followup',
+          description: 'Ask the user a single clarifying question to collect missing information.',
+          parameters: {
+            type: 'object',
+            required: ['question'],
+            properties: {
+              question: { type: 'string', description: 'The single question to ask' }
+            }
+          }
+        }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'confirm_plan',
+          description: 'You have enough information. Present the analysis plan to the user for confirmation before running agents.',
+          parameters: {
+            type: 'object',
+            required: ['ticker', 'companyName', 'aspects', 'needsPDF', 'planSummary'],
+            properties: {
+              ticker: { type: 'string', description: 'Best-guess Yahoo Finance ticker symbol (e.g. AAPL, 1810.HK)' },
+              companyName: { type: 'string' },
+              aspects: {
+                type: 'array',
+                items: { type: 'string', enum: ['highlights', 'risks', 'esg', 'competitors'] },
+                description: 'Which analysis sections to run'
+              },
+              needsPDF: { type: 'boolean', description: 'True if the user mentioned having a PDF report to upload' },
+              planSummary: { type: 'string', description: 'One short paragraph summarising what will be analysed and which agents will be used' }
+            }
+          }
+        }
+      }
+    ],
+    tool_choice: 'required'
+  } as any);
+
+  const toolCall = response.choices[0]?.message?.tool_calls?.[0];
+  if (!toolCall) throw new Error('No tool call returned from dialogue LLM');
+
+  const args = JSON.parse(toolCall.function.arguments || '{}');
+  if (toolCall.function.name === 'confirm_plan') {
+    return { type: 'plan', ...args };
+  }
+  return { type: 'question', content: args.question };
+}
+
+// ─── Orchestrator tool planner ───────────────────────────────────────────────
+
 export async function planOrchestratorToolCalls(input: {
   userRequest: string;
   ticker?: string;
