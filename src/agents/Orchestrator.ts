@@ -2,6 +2,8 @@ import { AnalysisResult, CrossAnalysisResult, ValuationSummary, ValuationVerdict
 import { FundamentalAgent } from "./FundamentalAgent";
 import { QuantAgent } from "./QuantAgent";
 import { PeerAgent } from "./PeerAgent";
+import { ESGAgent } from "./ESGAgent";
+import { StakeholderAgent } from "./StakeholderAgent";
 import { CIOAgent } from "./CIOAgent";
 import { OrchestratorToolCall, planOrchestratorToolCalls } from "./LLMProvider";
 
@@ -227,9 +229,10 @@ export class OrchestratorAgent {
     requestedOptions: string[],
     userRequest: string,
     result: Partial<AnalysisResult>
-  ): Array<"esg" | "highlights" | "risks" | "summary"> {
-    const gaps: Array<"esg" | "highlights" | "risks" | "summary"> = [];
+  ): Array<"esg" | "highlights" | "risks" | "summary" | "ESG data unavailable" | "Stakeholder data unavailable"> {
+    const gaps: Array<"esg" | "highlights" | "risks" | "summary" | "ESG data unavailable" | "Stakeholder data unavailable"> = [];
     const lower = userRequest.toLowerCase();
+    const extendedResult = result as any;
     const isNotFound = (s: string) =>
       !s || s.length < 80 ||
       /not (found|available|covered|mentioned|included|present)/i.test(s) ||
@@ -239,6 +242,10 @@ export class OrchestratorAgent {
 
     if (requestedOptions.includes("esg") || lower.includes("esg") || lower.includes("environment")) {
       if (isNotFound(result.esgSummary || "")) gaps.push("esg");
+      if (!extendedResult.esg || extendedResult.esg.data_source === "unavailable") gaps.push("ESG data unavailable");
+    }
+    if (requestedOptions.includes("stakeholder") || lower.includes("stakeholder") || lower.includes("upstream") || lower.includes("downstream") || lower.includes("management")) {
+      if (!extendedResult.stakeholder) gaps.push("Stakeholder data unavailable");
     }
     if (requestedOptions.includes("highlights") || lower.includes("highlight")) {
       if (!result.highlights || result.highlights.length === 0) gaps.push("highlights");
@@ -254,7 +261,7 @@ export class OrchestratorAgent {
    * using LLM training knowledge, with a clear AI-synthesis disclaimer.
    */
   private static async fillGapsWithKnowledge(
-    gaps: Array<"esg" | "highlights" | "risks" | "summary">,
+    gaps: Array<"esg" | "highlights" | "risks" | "summary" | "ESG data unavailable" | "Stakeholder data unavailable">,
     result: Partial<AnalysisResult>,
     input: { ticker?: string; options: string[]; userRequest?: string },
     onEvent: (event: AgentEvent) => void
@@ -264,6 +271,11 @@ export class OrchestratorAgent {
     const knownContext = [result.summary, JSON.stringify(result.metrics || [])].filter(Boolean).join("\n").substring(0, 3000);
 
     for (const gap of gaps) {
+      if (gap === "ESG data unavailable" || gap === "Stakeholder data unavailable") {
+        onEvent({ agent: "Orchestrator", status: gap });
+        continue;
+      }
+
       onEvent({ agent: "CIOAgent", status: `Synthesizing "${gap}" from LLM knowledge for ${companyName}...` });
       try {
         const synthesized = await CIOAgent.synthesizeFromKnowledge(companyName, ticker, gap, knownContext);
@@ -312,14 +324,15 @@ export class OrchestratorAgent {
       onEvent({ agent: "FundamentalAgent", status: `Failed: ${e.message}` });
     }
 
-    // ── Phase 2: QuantAgent + PeerAgent in parallel using extracted ticker ─
+    // ── Phase 2: QuantAgent + PeerAgent + ESGAgent + StakeholderAgent in parallel using extracted ticker ─
     // Clean the raw ticker: "1810 (HKD) / 81810 (CNY)" → "1810"
     // The dashboard search API will then resolve "1810" → "1810.HK"
     const rawTicker = result.company?.ticker || "";
     const extractedTicker = rawTicker.split(/[\s\/\(（]/)[0].trim() || rawTicker.trim();
 
     if (extractedTicker) {
-      onEvent({ agent: "Orchestrator", status: `Ticker "${extractedTicker}" extracted from report — dispatching QuantAgent${options.includes("competitors") ? " + PeerAgent" : ""} in parallel...` });
+      const parallelAgentNames = ["QuantAgent", ...(options.includes("competitors") ? ["PeerAgent"] : []), "ESGAgent", "StakeholderAgent"];
+      onEvent({ agent: "Orchestrator", status: `Ticker "${extractedTicker}" extracted from report — dispatching ${parallelAgentNames.join(" + ")} in parallel...` });
 
       const parallelTasks: Promise<Partial<AnalysisResult>>[] = [
         QuantAgent.runAutonomousAnalysis(extractedTicker, options,
@@ -328,6 +341,30 @@ export class OrchestratorAgent {
           onEvent({ agent: "QuantAgent", status: `Failed: ${e.message}` });
           return {} as Partial<AnalysisResult>;
         }),
+        ESGAgent.run({
+          ticker: extractedTicker,
+          industry: result.company?.name || "unknown",
+          pdfText: [fundamentalResult.summary, result.esgSummary].filter(Boolean).join("\n") || null
+        }, onEvent)
+          .then(esg => {
+            const partial = { esg } as Partial<AnalysisResult>;
+            onEvent({ agent: "ESGAgent", status: "Complete", partial });
+            return partial;
+          })
+          .catch((e: any) => {
+            onEvent({ agent: "ESGAgent", status: `Failed: ${e.message}` });
+            return {} as Partial<AnalysisResult>;
+          }),
+        StakeholderAgent.runAutonomousAnalysis({ ticker: extractedTicker }, onEvent)
+          .then(stakeholder => {
+            const partial = { stakeholder } as Partial<AnalysisResult>;
+            onEvent({ agent: "StakeholderAgent", status: "Complete", partial });
+            return partial;
+          })
+          .catch((e: any) => {
+            onEvent({ agent: "StakeholderAgent", status: `Failed: ${e.message}` });
+            return {} as Partial<AnalysisResult>;
+          }),
       ];
 
       if (options.includes("competitors")) {
@@ -364,8 +401,13 @@ export class OrchestratorAgent {
 
     // ── Phase 3: CIOAgent cross-analysis ─────────────────────────────────
     try {
-      onEvent({ agent: "CIOAgent", status: "Running cross-analysis between report and market data..." });
-      const crossAnalysis = await CIOAgent.crossAnalyze(fundamentalResult, result);
+      onEvent({ agent: "CIOAgent", status: "Running cross-analysis across report, market, ESG, stakeholder, and peer outputs..." });
+      const cioContext = {
+        ...result,
+        esg: (result as any).esg,
+        stakeholder: (result as any).stakeholder
+      };
+      const crossAnalysis = await CIOAgent.crossAnalyze(fundamentalResult, cioContext);
       const partial: Partial<AnalysisResult> = { crossAnalysis };
       result = this.mergePartial(result, partial);
       onEvent({ agent: "CIOAgent", status: "Cross-analysis complete", partial });

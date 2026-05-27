@@ -5,7 +5,7 @@ import {
   AlertTriangle, CheckCircle2, FileText,
   BarChart3, RefreshCcw, DollarSign,
   ChevronDown, Maximize2, Minimize2, Activity,
-  PieChart, Sprout, Target, Download, Loader2
+  PieChart, Sprout, Target, Download, Loader2, Users
 } from 'lucide-react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid,
@@ -26,9 +26,9 @@ interface DashboardProps {
 }
 
 // ── Skeleton helpers ──────────────────────────────────────────────────────────
-function SkeletonLine({ w = 'full' }: { w?: string }) {
+const SkeletonLine: React.FC<{ w?: string }> = ({ w = 'full' }) => {
   return <div className={`h-3.5 bg-slate-800 rounded animate-pulse w-${w}`} />;
-}
+};
 function SkeletonCard() {
   return (
     <div className="h-24 bg-slate-800/60 rounded-xl animate-pulse" />
@@ -53,6 +53,8 @@ export default function AnalysisDashboard({ data, isLoading = false, onReset, on
   const sentiment = data.sentiment ?? 'Neutral';
   const summary   = data.summary   ?? '';
   const competitors = data.competitors ?? [];
+  const esg = data.esg;
+  const stakeholder = data.stakeholder;
 
   const [stock, setStock] = useState<StockData | null>(null);
   const [history, setHistory] = useState<HistoricalBar[]>([]);
@@ -71,6 +73,7 @@ export default function AnalysisDashboard({ data, isLoading = false, onReset, on
     summary: true,
     insights: true,
     esg: true,
+    stakeholder: true,
     competitors: false
   });
 
@@ -155,7 +158,7 @@ export default function AnalysisDashboard({ data, isLoading = false, onReset, on
   };
 
   const setAllSections = (isOpen: boolean) => {
-    setSections({ metrics: isOpen, history: isOpen, valuation: isOpen, summary: isOpen, insights: isOpen, esg: isOpen, competitors: isOpen });
+    setSections({ metrics: isOpen, history: isOpen, valuation: isOpen, summary: isOpen, insights: isOpen, esg: isOpen, stakeholder: isOpen, competitors: isOpen });
   };
 
   const allExpanded = Object.values(sections).every(Boolean);
@@ -559,11 +562,13 @@ export default function AnalysisDashboard({ data, isLoading = false, onReset, on
       )}
 
       {/* ── ESG Summary ──────────────────────────────────────────────────── */}
-      {(isLoading || data.esgSummary) && (
+      {(isLoading || data.esgSummary || esg) && (
         <div className="pdf-section">
-          <CollapsibleSection title="ESG Profile (Fundamental Agent)" icon={<Sprout className="w-5 h-5 text-emerald-500" />} isOpen={sections.esg} onToggle={() => toggleSection('esg')}>
-            {isLoading && !data.esgSummary ? (
+          <CollapsibleSection title={esg ? "ESG Profile (ESG Agent)" : "ESG Profile (Fundamental Agent)"} icon={<Sprout className="w-5 h-5 text-emerald-500" />} isOpen={sections.esg} onToggle={() => toggleSection('esg')}>
+            {isLoading && !data.esgSummary && !esg ? (
               <SkeletonSection rows={6} />
+            ) : esg ? (
+              <StructuredESG esg={esg} />
             ) : data.esgSummary ? (
               <div className="p-6 bg-emerald-950/10 border border-emerald-900/30 rounded-xl">
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-5">
@@ -576,6 +581,19 @@ export default function AnalysisDashboard({ data, isLoading = false, onReset, on
                 </div>
                 <EsgText text={data.esgSummary} />
               </div>
+            ) : null}
+          </CollapsibleSection>
+        </div>
+      )}
+
+      {/* ── Stakeholder Analysis ─────────────────────────────────────────── */}
+      {(isLoading || stakeholder) && (
+        <div className="pdf-section">
+          <CollapsibleSection title="Stakeholder & Management Analysis (Stakeholder Agent)" icon={<Users className="w-5 h-5 text-cyan-500" />} isOpen={sections.stakeholder} onToggle={() => toggleSection('stakeholder')}>
+            {isLoading && !stakeholder ? (
+              <SkeletonSection rows={6} />
+            ) : stakeholder ? (
+              <StakeholderView stakeholder={stakeholder} />
             ) : null}
           </CollapsibleSection>
         </div>
@@ -662,6 +680,155 @@ function EsgText({ text }: { text: string }) {
   );
 }
 
+function StructuredESG({ esg }: { esg: any }) {
+  const dimensions = [
+    ['Environmental', esg.environmental],
+    ['Social', esg.social],
+    ['Governance', esg.governance],
+  ];
+
+  return (
+    <div className="space-y-5">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <InfoTile label="Overall Score" value={esg.overall_score == null ? 'null' : `${esg.overall_score}/10`} />
+        <InfoTile label="Data Source" value={esg.data_source || '—'} />
+        <InfoTile label="Confidence" value={esg.confidence || '—'} />
+        <InfoTile label="Refresh" value={esg.refresh_interval || '—'} />
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {dimensions.map(([label, value]: any) => (
+          <div key={label} className="p-5 bg-emerald-950/10 border border-emerald-900/30 rounded-xl">
+            <div className="flex items-center justify-between gap-3 mb-4">
+              <div className="text-xs font-bold text-emerald-400 uppercase tracking-widest">{label}</div>
+              <div className="text-lg font-black text-white font-mono">{value?.score == null ? 'null' : `${value.score}/10`}</div>
+            </div>
+            <SignalList title="Key Risks" items={value?.key_risks || []} />
+            <SignalList title="Improvement Signals" items={value?.improvement_signals || []} />
+          </div>
+        ))}
+      </div>
+      {esg.data_gaps?.length > 0 && (
+        <div className="p-4 rounded-xl border border-amber-900/40 bg-amber-950/10">
+          <div className="text-[10px] font-bold text-amber-400 uppercase tracking-widest mb-2">Data Gaps</div>
+          <ul className="space-y-1">
+            {esg.data_gaps.map((gap: string, i: number) => (
+              <li key={i} className="text-xs text-slate-400">{gap}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StakeholderView({ stakeholder }: { stakeholder: any }) {
+  const management = stakeholder.management || {};
+  const selected = stakeholder.selected_entities || [];
+  const candidates = stakeholder.candidates || [];
+
+  return (
+    <div className="space-y-5">
+      <div className="p-5 bg-cyan-950/10 border border-cyan-900/30 rounded-xl">
+        <div className="text-[10px] font-bold text-cyan-400 uppercase tracking-widest mb-2">Company Intro</div>
+        <p className="text-sm text-slate-300 leading-relaxed">{stakeholder.company_intro || 'No company intro available.'}</p>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <InfoTile label="Mode" value={stakeholder.selection_mode || '—'} />
+        <InfoTile label="Candidates" value={String(candidates.length)} />
+        <InfoTile label="Selected" value={String(selected.length)} />
+        <InfoTile label="Refresh" value={stakeholder.refresh_interval || '—'} />
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        <div className="p-5 bg-[#0a0d14]/80 border border-slate-800 rounded-xl">
+          <div className="text-xs font-bold text-cyan-400 uppercase tracking-widest mb-3">Top Revenue Industries</div>
+          <div className="space-y-2">
+            {(stakeholder.top_industries || []).map((industry: any, i: number) => (
+              <div key={i} className="flex items-center justify-between gap-3 text-sm border-b border-slate-800/70 last:border-0 pb-2 last:pb-0">
+                <span className="text-slate-300">{industry.industry}</span>
+                <span className="text-slate-500 font-mono">{industry.revenue_share_pct}% · {industry.period}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="p-5 bg-[#0a0d14]/80 border border-slate-800 rounded-xl">
+          <div className="text-xs font-bold text-cyan-400 uppercase tracking-widest mb-3">Management</div>
+          <ManagementRow label="CEO" value={management.ceo} />
+          <ManagementRow label="CFO" value={management.cfo} />
+          <div className="pt-3 mt-3 border-t border-slate-800 text-sm">
+            <span className="text-slate-500">Compensation alignment: </span>
+            <span className="text-slate-300 font-semibold">{management.compensation_alignment ?? 'null'}</span>
+          </div>
+        </div>
+      </div>
+      <EntityList title="Selected Deep-Dive Entities" entities={selected} />
+      <EntityList title="Candidate Stakeholders" entities={candidates.slice(0, 15)} />
+    </div>
+  );
+}
+
+function InfoTile({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="p-4 bg-[#0a0d14]/80 border border-slate-800 rounded-xl min-w-0">
+      <div className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">{label}</div>
+      <div className="text-sm text-white font-semibold break-words">{value}</div>
+    </div>
+  );
+}
+
+function SignalList({ title, items }: { title: string; items: string[] }) {
+  return (
+    <div className="mb-4 last:mb-0">
+      <div className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">{title}</div>
+      {items.length > 0 ? (
+        <ul className="space-y-2">
+          {items.map((item, i) => <li key={i} className="text-xs text-slate-300 leading-relaxed">{item}</li>)}
+        </ul>
+      ) : (
+        <div className="text-xs text-slate-600 italic">No public data.</div>
+      )}
+    </div>
+  );
+}
+
+function ManagementRow({ label, value }: { label: string; value: any }) {
+  return (
+    <div className="flex items-start justify-between gap-3 py-2 border-b border-slate-800/70 last:border-0">
+      <div>
+        <div className="text-sm font-bold text-slate-300">{label}</div>
+        <div className="text-xs text-slate-500 mt-1">{value?.recent_changes?.length ? value.recent_changes.join('; ') : 'No recent changes disclosed.'}</div>
+      </div>
+      <div className="text-right">
+        <div className="text-sm text-white">{value?.name ?? 'null'}</div>
+        <div className="text-xs text-slate-500">{value?.tenure_years == null ? 'tenure null' : `${value.tenure_years} yrs`}</div>
+      </div>
+    </div>
+  );
+}
+
+function EntityList({ title, entities }: { title: string; entities: any[] }) {
+  if (!entities.length) return null;
+  return (
+    <div className="p-5 bg-[#0a0d14]/80 border border-slate-800 rounded-xl">
+      <div className="text-xs font-bold text-cyan-400 uppercase tracking-widest mb-3">{title}</div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {entities.map((entity, i) => (
+          <div key={`${entity.name}-${i}`} className="p-4 rounded-lg border border-slate-800 bg-slate-950/40">
+            <div className="flex items-start justify-between gap-3 mb-2">
+              <div className="min-w-0">
+                <div className="text-sm font-bold text-white truncate">{entity.name}</div>
+                <div className="text-[10px] text-slate-500 uppercase tracking-widest">{entity.type} · {entity.industry}</div>
+              </div>
+              <div className="text-[10px] text-cyan-400 font-mono whitespace-nowrap">{entity.sort_value}</div>
+            </div>
+            <p className="text-xs text-slate-400 leading-relaxed">{entity.description}</p>
+            {entity.analysis && <p className="text-xs text-slate-300 leading-relaxed mt-3 border-t border-slate-800 pt-3">{entity.analysis}</p>}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function metricSubGroup(label: string): 'valuation' | 'profitability' | 'overview' {
   const l = label.toLowerCase();
   if (VALUATION_KEYS.some(k => l.includes(k))) return 'valuation';
@@ -675,7 +842,7 @@ function TrendIcon({ trend }: { trend: string }) {
   return <Minus className="w-3.5 h-3.5 text-slate-500" />;
 }
 
-function MetricRow({ metric }: { metric: any }) {
+const MetricRow: React.FC<{ metric: any }> = ({ metric }) => {
   const trendBg = metric.trend === 'up' ? 'text-emerald-400' : metric.trend === 'down' ? 'text-rose-400' : 'text-slate-500';
   return (
     <div className="flex items-center justify-between py-2.5 border-b border-slate-800/60 last:border-0 group">
@@ -686,7 +853,7 @@ function MetricRow({ metric }: { metric: any }) {
       </div>
     </div>
   );
-}
+};
 
 function MetricPanel({ title, accent, metrics }: { title: string; accent: string; metrics: any[] }) {
   if (!metrics.length) return null;

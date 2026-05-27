@@ -22,6 +22,8 @@ export interface AnalysisResult {
   risks?: string[];
   highlights?: string[];
   esgSummary?: string;
+  esg?: ESGOutput;
+  stakeholder?: StakeholderOutput;
   competitors?: {
     name: string;
     ticker: string;
@@ -79,4 +81,58 @@ export interface ValuationSummary {
   targetLowPrice?: number;
   numberOfAnalystOpinions?: number;
   recommendationTrend?: any[];
+}
+
+export interface ESGDimension {
+  score: number | null
+  key_risks: string[]
+  improvement_signals: string[]
+}
+
+export interface ESGOutput {
+  as_of: string
+  data_source: string
+  confidence: 'high' | 'medium' | 'low'
+  refresh_interval: string
+  environmental: ESGDimension
+  social: ESGDimension
+  governance: ESGDimension
+  overall_score: number | null
+  data_gaps: string[]
+}
+
+export interface IndustryRevenue {
+  industry: string
+  revenue_share_pct: number
+  period: string
+}
+
+export interface StakeholderEntity {
+  name: string
+  type: 'upstream' | 'downstream' | 'peer'
+  industry: string
+  description: string
+  sort_value: string | 'no_public_data'
+  sort_metric: 'transaction_volume' | 'market_cap'
+  analysis?: string
+}
+
+export interface ManagementInfo {
+  ceo: { name: string | null; tenure_years: number | null; recent_changes: string[] }
+  cfo: { name: string | null; tenure_years: number | null; recent_changes: string[] }
+  compensation_alignment: 'aligned' | 'misaligned' | 'neutral' | null
+}
+
+export interface StakeholderOutput {
+  as_of: string
+  data_source: string
+  confidence: 'high' | 'medium' | 'low'
+  refresh_interval: string
+  top_industries: IndustryRevenue[]
+  selected_industries: string[]
+  selection_mode: 'specific' | 'comprehensive'
+  candidates: StakeholderEntity[]
+  selected_entities: StakeholderEntity[]
+  management: ManagementInfo
+  company_intro: string
 }
