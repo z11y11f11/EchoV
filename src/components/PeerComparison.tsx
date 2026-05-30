@@ -127,6 +127,9 @@ export function PeerComparison({ competitors, currentTicker }: PeerComparisonPro
   return (
     <div className="w-full">
       <div className="bg-[#080a0f]/80 rounded-xl border border-slate-800/80 overflow-hidden shadow-[0_0_20px_rgba(37,99,235,0.05)] backdrop-blur-md">
+        <div className="px-6 py-3 border-b border-slate-800/80 bg-[#0a0d14] text-[11px] text-amber-400 font-bold tracking-wider">
+          数值为本地货币，未换算
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm text-left">
             <thead className="bg-[#0a0d14] border-b border-slate-800/80 text-slate-400 font-bold uppercase tracking-widest text-[10px]">

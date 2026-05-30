@@ -265,8 +265,9 @@ Your role in this dialogue:
   const toolCall = response.choices[0]?.message?.tool_calls?.[0];
   if (!toolCall) throw new Error('No tool call returned from dialogue LLM');
 
-  const args = JSON.parse(toolCall.function.arguments || '{}');
-  if (toolCall.function.name === 'confirm_plan') {
+  const functionToolCall = toolCall as OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall;
+  const args = JSON.parse(functionToolCall.function.arguments || '{}');
+  if (functionToolCall.function.name === 'confirm_plan') {
     return { type: 'plan', ...args };
   }
   return { type: 'question', content: args.question };

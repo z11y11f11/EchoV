@@ -370,6 +370,7 @@ export default function AnalysisDashboard({ data, isLoading = false, onReset, on
                   {Math.abs(stock.regularMarketChangePercent || 0).toFixed(2)}%
                 </span>
               </div>
+              <span className="mt-1 text-[10px] text-amber-400 font-bold">数值为本地货币，未换算</span>
             </div>
           )}
           <button
@@ -527,6 +528,9 @@ export default function AnalysisDashboard({ data, isLoading = false, onReset, on
       {/* ── Key Performance Indicators ───────────────────────────────────── */}
       <div className="pdf-section">
         <CollapsibleSection title="Key Performance Indicators" icon={<Activity className="w-5 h-5 text-blue-500" />} isOpen={sections.metrics} onToggle={() => toggleSection('metrics')}>
+          <div className="mb-4 rounded-lg border border-amber-900/40 bg-amber-950/10 px-3 py-2 text-[11px] font-bold text-amber-400">
+            数值为本地货币，未换算
+          </div>
           {isLoading && !metrics.length ? (
             <div className="space-y-4">
               <div className="h-4 w-40 bg-slate-800 rounded animate-pulse" />
