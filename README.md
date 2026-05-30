@@ -19,6 +19,8 @@ Built for the **Milan AI Week Hackathon 2026** · Powered by Gemini, OpenAI GPT-
 - **Multi-provider LLM support** — Gemini 1.5 Pro · OpenAI GPT-4o · Featherless (optional, open-source models)
 - **Valuation models** — DCF calculator, multiples grid (PE, PEG, EV/EBITDA, ROE), CIO verdict
 - **ESG profile** — Environmental / Social / Governance analysis with pillar badges
+- **Live Web Intelligence** — Bright Data SERP-powered news, hiring, regulatory, and competitive web signals
+- **Stakeholder analysis** — upstream/downstream relationship mapping and peer KPI comparison
 - **Peer comparison** — sector-aware competitor selection with price and PE benchmarks
 - **Export to PDF** — one-click dashboard export
 
@@ -85,6 +87,10 @@ OPENAI_API_KEY=your_openai_api_key
 # Optional: open-source model inference via Featherless
 FEATHERLESS_API_KEY=your_featherless_api_key
 FEATHERLESS_MODEL=mistralai/Mistral-7B-Instruct-v0.3   # default
+
+# Optional: live web intelligence via Bright Data SERP
+BRIGHTDATA_API_KEY=your_brightdata_api_key
+BRIGHTDATA_SERP_ZONE=serp_api1
 ```
 
 **Provider priority**: Featherless (if key set) → OpenAI → Gemini. The Orchestrator dialogue and tool-planning always use OpenAI (requires function calling).
@@ -142,6 +148,10 @@ The Express server serves the Vite build as static files and exposes `/api/extra
 | 2026-05-17 | OpenAI JSON schema type mismatch (`STRING` vs `string`) | Fixed | LLMProvider normalizes Gemini schema types before sending to OpenAI. |
 | 2026-05-19 | ESG section missing from dashboard | Fixed | Added ESG render block; Mode A options now include `'esg'`. |
 | 2026-05-19 | Metric unit inconsistency (`457,286 Million RMB` vs `457.29B`) | Fixed | Agent prompts enforce `<number><B\|M> <ISO_CODE>` and `x`/`%` suffixes. |
+| 2026-05-30 | Live Web Intelligence panel missing from dashboard | Fixed | Dashboard now reads `data.webIntel`, includes `webIntel` in section state/export toggles, and Orchestrator returns a `webIntel` placeholder with `data_gaps` when Bright Data is unavailable. |
+| 2026-05-30 | WebIntel absent in ticker-only flow | Fixed | `runMasterAnalysis()` now runs WebIntelAgent alongside QuantAgent for ticker-only analysis; PDF flow already runs WebIntelAgent in parallel. |
+| 2026-05-30 | Peer comparison currency display misleading | Fixed | Peer table now displays local currency for price and market cap, e.g. KRW for Samsung and HKD for Hong Kong listings. |
+| 2026-05-30 | Stakeholder candidate UI repeated and unclear | Improved | Candidate selection is grouped by selected industry with upstream/downstream for relationship understanding and peers reserved for comparison. |
 | 2026-05-17 | Review OpenAI compute usage | Follow-up | Recheck token/request usage after more test runs. |
 
 ---

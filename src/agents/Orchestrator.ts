@@ -4,6 +4,7 @@ import { QuantAgent } from "./QuantAgent";
 import { PeerAgent } from "./PeerAgent";
 import { ESGAgent } from "./ESGAgent";
 import { StakeholderAgent } from "./StakeholderAgent";
+import { WebIntelAgent } from "./WebIntelAgent";
 import { CIOAgent } from "./CIOAgent";
 import { OrchestratorToolCall, planOrchestratorToolCalls } from "./LLMProvider";
 
@@ -153,14 +154,32 @@ export class OrchestratorAgent {
       case "fetch_market_data": {
         const ticker = toolCall.arguments.ticker || input.ticker;
         if (!ticker) { onEvent({ agent: "QuantAgent", status: "Skipped: no ticker available" }); return {}; }
-        onEvent({ agent: "Orchestrator", status: "Calling fetch_market_data → QuantAgent" });
+        onEvent({ agent: "Orchestrator", status: "Calling fetch_market_data → QuantAgent + WebIntelAgent" });
         try {
-          const quantRes = await QuantAgent.runAutonomousAnalysis(
-            ticker, toolCall.arguments.options || input.options,
-            (s) => onEvent({ agent: "QuantAgent", status: s.replace("QuantAgent: ", "") })
-          );
+          const [quantRes, webIntelRes] = await Promise.all([
+            QuantAgent.runAutonomousAnalysis(
+              ticker, toolCall.arguments.options || input.options,
+              (s) => onEvent({ agent: "QuantAgent", status: s.replace("QuantAgent: ", "") })
+            ).catch((e: any) => {
+              onEvent({ agent: "QuantAgent", status: `Failed: ${e.message}` });
+              return {} as Partial<AnalysisResult>;
+            }),
+            WebIntelAgent.run({
+              ticker,
+              companyName: currentResult.company?.name || input.userRequest || ticker
+            }, onEvent)
+              .then(webIntel => ({ webIntel } as Partial<AnalysisResult>))
+              .catch((e: any) => {
+                onEvent({ agent: "WebIntelAgent", status: `Failed: ${e.message}` });
+                return { webIntel: this.buildUnavailableWebIntel(ticker, e.message) } as Partial<AnalysisResult>;
+              })
+          ]);
+          const partial = this.mergePartial(quantRes, webIntelRes);
           onEvent({ agent: "QuantAgent", status: "Complete", partial: quantRes });
-          return quantRes;
+          if ((webIntelRes as any).webIntel) {
+            onEvent({ agent: "WebIntelAgent", status: "Complete", partial: webIntelRes });
+          }
+          return partial;
         } catch (e: any) { onEvent({ agent: "QuantAgent", status: `Failed: ${e.message}` }); return {}; }
       }
 
@@ -296,6 +315,25 @@ export class OrchestratorAgent {
     if (payload?.summary) return `Returned ${keys.join(", ")}; summary: ${String(payload.summary).slice(0, 120)}`;
     return `Returned ${keys.join(", ") || "no structured fields"}`;
   }
+
+  private static buildUnavailableWebIntel(ticker: string, reason: string) {
+    return {
+      as_of: new Date().toISOString(),
+      data_source: "brightdata_serp",
+      confidence: "low" as const,
+      refresh_interval: "每天整点",
+      ticker,
+      news_signals: [],
+      hiring_trend: {
+        signal: "unknown" as const,
+        evidence: "Live web intelligence unavailable."
+      },
+      regulatory_alerts: [],
+      competitive_signals: [],
+      data_gaps: [`WebIntelAgent failed: ${reason || "unknown error"}`]
+    };
+  }
+
   /**
    * Mode B: PDF-first analysis.
    * 1. FundamentalAgent reads the report and extracts company name + ticker.
@@ -324,14 +362,14 @@ export class OrchestratorAgent {
       onEvent({ agent: "FundamentalAgent", status: `Failed: ${e.message}` });
     }
 
-    // ── Phase 2: QuantAgent + PeerAgent + ESGAgent + StakeholderAgent in parallel using extracted ticker ─
+    // ── Phase 2: QuantAgent + PeerAgent + ESGAgent + StakeholderAgent + WebIntelAgent in parallel using extracted ticker ─
     // Clean the raw ticker: "1810 (HKD) / 81810 (CNY)" → "1810"
     // The dashboard search API will then resolve "1810" → "1810.HK"
     const rawTicker = result.company?.ticker || "";
     const extractedTicker = rawTicker.split(/[\s\/\(（]/)[0].trim() || rawTicker.trim();
 
     if (extractedTicker) {
-      const parallelAgentNames = ["QuantAgent", ...(options.includes("competitors") ? ["PeerAgent"] : []), "ESGAgent", "StakeholderAgent"];
+      const parallelAgentNames = ["QuantAgent", ...(options.includes("competitors") ? ["PeerAgent"] : []), "ESGAgent", "StakeholderAgent", "WebIntelAgent"];
       onEvent({ agent: "Orchestrator", status: `Ticker "${extractedTicker}" extracted from report — dispatching ${parallelAgentNames.join(" + ")} in parallel...` });
 
       const parallelTasks: Promise<Partial<AnalysisResult>>[] = [
@@ -364,6 +402,19 @@ export class OrchestratorAgent {
           .catch((e: any) => {
             onEvent({ agent: "StakeholderAgent", status: `Failed: ${e.message}` });
             return {} as Partial<AnalysisResult>;
+          }),
+        WebIntelAgent.run({
+          ticker: extractedTicker,
+          companyName: result.company?.name || extractedTicker
+        }, onEvent)
+          .then(webIntel => {
+            const partial = { webIntel } as Partial<AnalysisResult>;
+            onEvent({ agent: "WebIntelAgent", status: "Complete", partial });
+            return partial;
+          })
+          .catch((e: any) => {
+            onEvent({ agent: "WebIntelAgent", status: `Failed: ${e.message}` });
+            return { webIntel: this.buildUnavailableWebIntel(extractedTicker, e.message) } as Partial<AnalysisResult>;
           }),
       ];
 
@@ -405,7 +456,8 @@ export class OrchestratorAgent {
       const cioContext = {
         ...result,
         esg: (result as any).esg,
-        stakeholder: (result as any).stakeholder
+        stakeholder: (result as any).stakeholder,
+        webIntel: (result as any).webIntel
       };
       const crossAnalysis = await CIOAgent.crossAnalyze(fundamentalResult, cioContext);
       const partial: Partial<AnalysisResult> = { crossAnalysis };

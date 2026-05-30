@@ -24,6 +24,7 @@ export interface AnalysisResult {
   esgSummary?: string;
   esg?: ESGOutput;
   stakeholder?: StakeholderOutput;
+  webIntel?: WebIntelOutput;
   competitors?: {
     name: string;
     ticker: string;
@@ -135,4 +136,35 @@ export interface StakeholderOutput {
   selected_entities: StakeholderEntity[]
   management: ManagementInfo
   company_intro: string
+}
+
+export interface NewsSignal {
+  title: string
+  url: string
+  snippet: string
+  date: string | null
+  sentiment: 'positive' | 'negative' | 'neutral'
+}
+
+export interface WebIntelOutput {
+  as_of: string
+  data_source: string
+  confidence: 'high' | 'medium' | 'low'
+  refresh_interval: string
+  ticker: string
+  news_signals: NewsSignal[]
+  hiring_trend: {
+    signal: 'expanding' | 'contracting' | 'stable' | 'unknown'
+    evidence: string
+  }
+  regulatory_alerts: Array<{
+    summary: string
+    urgency: 'high' | 'medium' | 'low'
+    date: string | null
+  }>
+  competitive_signals: Array<{
+    signal: string
+    source: string
+  }>
+  data_gaps: string[]
 }

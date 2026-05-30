@@ -69,17 +69,21 @@ export function PeerComparison({ competitors, currentTicker }: PeerComparisonPro
               const financial = fetchedData.financialData || {};
               const detail = fetchedData.summaryDetail || {};
               const price = fetchedData.price?.regularMarketPrice;
+              const currency = fetchedData.price?.currency || fetchedData.price?.financialCurrency || '';
               const name = fetchedData.price?.longName || fetchedData.price?.shortName || c.name;
               
               const parsedData = {
                   name,
                   role: c.isCurrent ? 'Analyzed Company' : 'Peer',
                   price,
-                  trailingPE: detail.trailingPE || stats.trailingPE,
-                  priceToBook: stats.priceToBook,
-                  enterpriseToEbitda: stats.enterpriseToEbitda,
-                  dividendYield: detail.dividendYield,
+                  currency,
+                  marketCap: fetchedData.price?.marketCap || detail.marketCap,
                   revenueGrowth: financial.revenueGrowth,
+                  ebitdaMargins: financial.ebitdaMargins,
+                  returnOnEquity: financial.returnOnEquity,
+                  debtToEquity: financial.debtToEquity,
+                  totalCash: financial.totalCash,
+                  totalDebt: financial.totalDebt,
               };
 
               // Store under original AND resolved ticker to ensure rendering connects
@@ -111,14 +115,13 @@ export function PeerComparison({ competitors, currentTicker }: PeerComparisonPro
     return () => { active = false; };
   }, [competitors, currentTicker]);
 
-  // Calculate industry averages (excluding current company if possible, or include all peers)
+  // Calculate peer averages for market overview and profitability/balance metrics.
   const peersOnly = displayOrder.filter(t => t !== currentTicker).map(t => peerData[t]).filter(Boolean);
   const avg = {
-     pe: peersOnly.reduce((acc, p) => acc + (p.trailingPE || 0), 0) / (peersOnly.filter(p => p.trailingPE).length || 1),
-     pb: peersOnly.reduce((acc, p) => acc + (p.priceToBook || 0), 0) / (peersOnly.filter(p => p.priceToBook).length || 1),
-     ev: peersOnly.reduce((acc, p) => acc + (p.enterpriseToEbitda || 0), 0) / (peersOnly.filter(p => p.enterpriseToEbitda).length || 1),
      revG: peersOnly.reduce((acc, p) => acc + (p.revenueGrowth || 0), 0) / (peersOnly.filter(p => p.revenueGrowth).length || 1),
-     div: peersOnly.reduce((acc, p) => acc + (p.dividendYield || 0), 0) / (peersOnly.filter(p => p.dividendYield).length || 1),
+     ebitda: peersOnly.reduce((acc, p) => acc + (p.ebitdaMargins || 0), 0) / (peersOnly.filter(p => p.ebitdaMargins).length || 1),
+     roe: peersOnly.reduce((acc, p) => acc + (p.returnOnEquity || 0), 0) / (peersOnly.filter(p => p.returnOnEquity).length || 1),
+     debt: peersOnly.reduce((acc, p) => acc + (p.debtToEquity || 0), 0) / (peersOnly.filter(p => p.debtToEquity).length || 1),
   };
 
   return (
@@ -130,12 +133,12 @@ export function PeerComparison({ competitors, currentTicker }: PeerComparisonPro
               <tr>
                 <th className="px-6 py-4">Company</th>
                 <th className="px-6 py-4">Role</th>
-                <th className="px-6 py-4">Price</th>
-                <th className="px-6 py-4">P/E</th>
-                <th className="px-6 py-4">P/B</th>
-                <th className="px-6 py-4">EV/EBITDA</th>
-                <th className="px-6 py-4">Growth %</th>
-                <th className="px-6 py-4">Div Yield</th>
+                <th className="px-6 py-4">Price Local</th>
+                <th className="px-6 py-4">Market Cap Local</th>
+                <th className="px-6 py-4">Revenue Growth</th>
+                <th className="px-6 py-4">EBITDA Margin</th>
+                <th className="px-6 py-4">ROE</th>
+                <th className="px-6 py-4">Debt / Equity</th>
               </tr>
             </thead>
           <tbody className="divide-y divide-slate-800/50">
@@ -172,10 +175,8 @@ export function PeerComparison({ competitors, currentTicker }: PeerComparisonPro
                            {d.role}
                          </span>
                        </td>
-                       <td className="px-6 py-4 font-mono text-slate-300">{d.price ? `$${d.price.toFixed(2)}` : '-'}</td>
-                       <td className="px-6 py-4 font-mono text-slate-300">{d.trailingPE?.toFixed(2) || '-'}</td>
-                       <td className="px-6 py-4 font-mono text-slate-300">{d.priceToBook?.toFixed(2) || '-'}</td>
-                       <td className="px-6 py-4 font-mono text-slate-300">{d.enterpriseToEbitda?.toFixed(2) || '-'}</td>
+                       <td className="px-6 py-4 font-mono text-slate-300">{formatCurrency(d.price, (d as any).currency)}</td>
+                       <td className="px-6 py-4 font-mono text-slate-300">{formatLargeNumber((d as any).marketCap, (d as any).currency)}</td>
                        <td className="px-6 py-4 font-mono">
                          {d.revenueGrowth ? (
                            <span className={d.revenueGrowth > 0 ? "text-emerald-400 font-bold" : "text-rose-400 font-bold"}>
@@ -183,7 +184,9 @@ export function PeerComparison({ competitors, currentTicker }: PeerComparisonPro
                            </span>
                          ) : <span className="text-slate-500">-</span>}
                        </td>
-                       <td className="px-6 py-4 font-mono text-slate-300">{d.dividendYield ? `${(d.dividendYield * 100).toFixed(2)}%` : '-'}</td>
+                       <td className="px-6 py-4 font-mono text-slate-300">{formatPercent((d as any).ebitdaMargins)}</td>
+                       <td className="px-6 py-4 font-mono text-slate-300">{formatPercent((d as any).returnOnEquity)}</td>
+                       <td className="px-6 py-4 font-mono text-slate-300">{(d as any).debtToEquity ? (d as any).debtToEquity.toFixed(1) : '-'}</td>
                      </tr>
                    );
                  })}
@@ -194,9 +197,7 @@ export function PeerComparison({ competitors, currentTicker }: PeerComparisonPro
                      <td className="px-6 py-4 text-slate-400 uppercase tracking-wider text-[11px] font-bold">Industry Avg</td>
                      <td className="px-6 py-4"></td>
                      <td className="px-6 py-4"></td>
-                     <td className="px-6 py-4 font-mono text-blue-400 font-bold">{avg.pe ? avg.pe.toFixed(2) : '-'}</td>
-                     <td className="px-6 py-4 font-mono text-blue-400 font-bold">{avg.pb ? avg.pb.toFixed(2) : '-'}</td>
-                     <td className="px-6 py-4 font-mono text-blue-400 font-bold">{avg.ev ? avg.ev.toFixed(2) : '-'}</td>
+                     <td className="px-6 py-4"></td>
                      <td className="px-6 py-4 font-mono">
                        {avg.revG ? (
                          <span className={avg.revG > 0 ? "text-emerald-500 font-bold" : "text-rose-500 font-bold"}>
@@ -204,7 +205,9 @@ export function PeerComparison({ competitors, currentTicker }: PeerComparisonPro
                          </span>
                        ) : <span className="text-slate-600">-</span>}
                      </td>
-                     <td className="px-6 py-4 font-mono text-blue-400 font-bold">{avg.div ? `${(avg.div * 100).toFixed(2)}%` : '-'}</td>
+                     <td className="px-6 py-4 font-mono text-blue-400 font-bold">{formatPercent(avg.ebitda)}</td>
+                     <td className="px-6 py-4 font-mono text-blue-400 font-bold">{formatPercent(avg.roe)}</td>
+                     <td className="px-6 py-4 font-mono text-blue-400 font-bold">{avg.debt ? avg.debt.toFixed(1) : '-'}</td>
                    </tr>
                  )}
                </>
@@ -215,4 +218,29 @@ export function PeerComparison({ competitors, currentTicker }: PeerComparisonPro
     </div>
     </div>
   );
+}
+
+function formatPercent(value?: number) {
+  if (!value) return '-';
+  return `${(value * 100).toFixed(1)}%`;
+}
+
+function formatCurrency(value?: number, currency?: string) {
+  if (!value) return '-';
+  const code = currency || '';
+  if (code === 'USD') return `$${value.toFixed(2)}`;
+  if (code === 'HKD') return `HK$${value.toFixed(2)}`;
+  if (code === 'CNY' || code === 'RMB') return `¥${value.toFixed(2)} CNY`;
+  if (code === 'JPY') return `¥${value.toFixed(0)} JPY`;
+  if (code === 'KRW') return `₩${value.toLocaleString()} KRW`;
+  return `${value.toLocaleString()}${code ? ` ${code}` : ''}`;
+}
+
+function formatLargeNumber(value?: number, currency?: string) {
+  if (!value) return '-';
+  const suffix = currency ? ` ${currency}` : '';
+  if (Math.abs(value) >= 1_000_000_000_000) return `${(value / 1_000_000_000_000).toFixed(1)}T${suffix}`;
+  if (Math.abs(value) >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(1)}B${suffix}`;
+  if (Math.abs(value) >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M${suffix}`;
+  return `${value.toLocaleString()}${suffix}`;
 }

@@ -5,7 +5,7 @@ import {
   AlertTriangle, CheckCircle2, FileText,
   BarChart3, RefreshCcw, DollarSign,
   ChevronDown, Maximize2, Minimize2, Activity,
-  PieChart, Sprout, Target, Download, Loader2, Users
+  PieChart, Sprout, Target, Download, Loader2, Users, Plus
 } from 'lucide-react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid,
@@ -14,6 +14,7 @@ import {
 import { AnalysisResult, StockData, HistoricalBar, ValuationSummary, CrossAnalysisResult } from '../types';
 import { ValuationModels } from './ValuationModels';
 import { PeerComparison } from './PeerComparison';
+import StakeholderModal from './StakeholderModal';
 import { crossAnalyze, synthesizeValuationVerdict } from '../services/ai';
 import { toPng } from 'html-to-image';
 import jsPDF from 'jspdf';
@@ -54,7 +55,7 @@ export default function AnalysisDashboard({ data, isLoading = false, onReset, on
   const summary   = data.summary   ?? '';
   const competitors = data.competitors ?? [];
   const esg = data.esg;
-  const stakeholder = data.stakeholder;
+  const webIntel = data.webIntel;
 
   const [stock, setStock] = useState<StockData | null>(null);
   const [history, setHistory] = useState<HistoricalBar[]>([]);
@@ -65,6 +66,10 @@ export default function AnalysisDashboard({ data, isLoading = false, onReset, on
   const [loadingStock, setLoadingStock] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [loadingSummary, setLoadingSummary] = useState(false);
+  const [isStakeholderModalOpen, setIsStakeholderModalOpen] = useState(false);
+  const [stakeholderOverride, setStakeholderOverride] = useState(data.stakeholder);
+  const [dashboardView, setDashboardView] = useState<'report' | 'peers'>('report');
+  const stakeholder = stakeholderOverride ?? data.stakeholder;
 
   const [sections, setSections] = useState({
     metrics: true,
@@ -72,6 +77,7 @@ export default function AnalysisDashboard({ data, isLoading = false, onReset, on
     valuation: true,
     summary: true,
     insights: true,
+    webIntel: true,
     esg: true,
     stakeholder: true,
     competitors: false
@@ -158,10 +164,14 @@ export default function AnalysisDashboard({ data, isLoading = false, onReset, on
   };
 
   const setAllSections = (isOpen: boolean) => {
-    setSections({ metrics: isOpen, history: isOpen, valuation: isOpen, summary: isOpen, insights: isOpen, esg: isOpen, stakeholder: isOpen, competitors: isOpen });
+    setSections({ metrics: isOpen, history: isOpen, valuation: isOpen, summary: isOpen, insights: isOpen, webIntel: isOpen, esg: isOpen, stakeholder: isOpen, competitors: isOpen });
   };
 
   const allExpanded = Object.values(sections).every(Boolean);
+
+  useEffect(() => {
+    setStakeholderOverride(data.stakeholder);
+  }, [data.stakeholder, company.ticker]);
 
   useEffect(() => {
     const resolveAndFetch = async () => {
@@ -308,7 +318,7 @@ export default function AnalysisDashboard({ data, isLoading = false, onReset, on
     <motion.div ref={dashboardRef} variants={container} initial="hidden" animate="show" className="space-y-6 max-w-6xl mx-auto pb-20">
 
       {/* ── Header ───────────────────────────────────────────────────────── */}
-      <header className="pdf-section flex flex-col md:flex-row md:items-center justify-between gap-4 bg-[#080a0f]/80 backdrop-blur-md p-6 rounded-2xl shadow-[0_0_30px_rgba(37,99,235,0.05)] border border-slate-800/80">
+      <header className="pdf-section flex flex-col md:flex-row md:items-start justify-between gap-4 bg-[#080a0f]/80 backdrop-blur-md p-6 rounded-2xl shadow-[0_0_30px_rgba(37,99,235,0.05)] border border-slate-800/80">
         <div className="flex items-center gap-4">
           <div className="w-12 h-12 bg-blue-600/20 border border-blue-500/30 rounded-xl flex items-center justify-center text-blue-400 font-bold text-xl shadow-[0_0_15px_rgba(37,99,235,0.2)]">
             {company.name.charAt(0) || '?'}
@@ -345,9 +355,9 @@ export default function AnalysisDashboard({ data, isLoading = false, onReset, on
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center justify-start md:justify-end gap-2 md:max-w-[600px]">
           {stock && (
-            <div className="flex flex-col items-end px-4 py-2 bg-[#0a0d14] rounded-xl border border-slate-800 shadow-inner">
+            <div className="flex flex-col items-end px-4 py-2 bg-[#0a0d14] rounded-xl border border-slate-800 shadow-inner shrink-0">
               <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">Market Price</span>
               <div className="flex items-center gap-2">
                 <span className="text-lg font-bold text-white font-mono">
@@ -362,21 +372,65 @@ export default function AnalysisDashboard({ data, isLoading = false, onReset, on
               </div>
             </div>
           )}
-          <div className="flex flex-col gap-1 items-center justify-center pr-1">
-            <button onClick={() => exportPDF(false)} disabled={isExporting || isLoading} className="px-4 py-2 flex items-center gap-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white rounded-xl transition-all shadow-[0_0_15px_rgba(37,99,235,0.3)] font-bold text-sm tracking-wide">
-              {isExporting ? <RefreshCcw className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-              Export PDF
-            </button>
-            <button onClick={() => exportPDF(true)} disabled={isExporting || isLoading} className="text-[10px] uppercase font-bold tracking-widest text-slate-500 hover:text-blue-400 transition-colors whitespace-nowrap disabled:opacity-40">
-              Export All Sections
-            </button>
-          </div>
-          <button onClick={onReset} className="p-2.5 text-slate-400 hover:text-white border border-slate-800 hover:bg-slate-800 bg-[#0a0d14] rounded-xl transition-colors shrink-0">
+          <button
+            onClick={() => setIsStakeholderModalOpen(true)}
+            disabled={!company.ticker || isLoading}
+            className="h-10 px-3 flex items-center gap-2 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-40 text-white rounded-xl transition-all shadow-[0_0_15px_rgba(8,145,178,0.25)] font-bold text-xs tracking-wide whitespace-nowrap"
+          >
+            <Plus className="w-4 h-4" />
+            Stakeholder Analysis
+          </button>
+          <button onClick={() => exportPDF(false)} disabled={isExporting || isLoading} className="h-10 px-3 flex items-center gap-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white rounded-xl transition-all shadow-[0_0_15px_rgba(37,99,235,0.3)] font-bold text-xs tracking-wide whitespace-nowrap">
+            {isExporting ? <RefreshCcw className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+            Export PDF
+          </button>
+          <button onClick={() => exportPDF(true)} disabled={isExporting || isLoading} className="h-10 px-3 border border-slate-800 bg-[#0a0d14] text-[10px] uppercase font-bold tracking-widest text-slate-400 hover:text-blue-400 hover:border-blue-900/50 transition-colors whitespace-nowrap disabled:opacity-40 rounded-xl">
+            All Sections
+          </button>
+          <button onClick={onReset} className="h-10 w-10 flex items-center justify-center text-slate-400 hover:text-white border border-slate-800 hover:bg-slate-800 bg-[#0a0d14] rounded-xl transition-colors shrink-0">
             <RefreshCcw className="w-5 h-5" />
           </button>
         </div>
       </header>
 
+      {isStakeholderModalOpen && (
+        <StakeholderModal
+          ticker={resolvedTicker || company.ticker}
+          onClose={() => setIsStakeholderModalOpen(false)}
+          onComplete={(output) => {
+            setStakeholderOverride(output);
+            setSections(prev => ({ ...prev, stakeholder: true }));
+          }}
+        />
+      )}
+
+      <div className="pdf-section flex flex-wrap items-center gap-2 rounded-xl border border-slate-800 bg-[#080a0f]/80 p-2">
+        <button
+          onClick={() => setDashboardView('report')}
+          className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-bold transition-colors ${
+            dashboardView === 'report'
+              ? 'bg-blue-500/10 text-blue-300 ring-1 ring-blue-500/20'
+              : 'text-slate-500 hover:bg-slate-900 hover:text-slate-300'
+          }`}
+        >
+          <FileText className="w-4 h-4" />
+          Company Report
+        </button>
+        <button
+          onClick={() => setDashboardView('peers')}
+          className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-bold transition-colors ${
+            dashboardView === 'peers'
+              ? 'bg-indigo-500/10 text-indigo-300 ring-1 ring-indigo-500/20'
+              : 'text-slate-500 hover:bg-slate-900 hover:text-slate-300'
+          }`}
+        >
+          <Target className="w-4 h-4" />
+          Peers Comparison
+        </button>
+      </div>
+
+      {dashboardView === 'report' ? (
+      <>
       {/* ── 30-Second Summary Card ────────────────────────────────────────── */}
       <div className="pdf-section bg-gradient-to-r from-slate-900 to-indigo-900 rounded-2xl p-6 text-white shadow-lg relative overflow-hidden">
         <div className="absolute top-0 right-0 p-8 opacity-10">
@@ -561,6 +615,21 @@ export default function AnalysisDashboard({ data, isLoading = false, onReset, on
         </div>
       )}
 
+      {/* ── Live Web Intelligence ───────────────────────────────────────── */}
+      {(isLoading || data.webIntel) && (
+        <div className="pdf-section">
+          <CollapsibleSection title="Live Web Intelligence (WebIntel Agent)" icon={<Activity className="w-5 h-5 text-cyan-500" />} isOpen={sections.webIntel} onToggle={() => toggleSection('webIntel')}>
+            {isLoading && !data.webIntel ? (
+              <SkeletonSection rows={6} />
+            ) : data.webIntel ? (
+              <WebIntelView webIntel={data.webIntel} />
+            ) : (
+              <p className="text-slate-500 text-sm italic">Live data unavailable</p>
+            )}
+          </CollapsibleSection>
+        </div>
+      )}
+
       {/* ── ESG Summary ──────────────────────────────────────────────────── */}
       {(isLoading || data.esgSummary || esg) && (
         <div className="pdf-section">
@@ -600,7 +669,7 @@ export default function AnalysisDashboard({ data, isLoading = false, onReset, on
       )}
 
       {/* ── Peer Comparison ───────────────────────────────────────────────── */}
-      {(isLoading || competitors.length > 0) && (
+      {false && (isLoading || competitors.length > 0) && (
         <div className="pdf-section">
           <CollapsibleSection title="Peer Comparison (Peer Agent)" icon={<Target className="w-5 h-5 text-indigo-500" />} isOpen={sections.competitors} onToggle={() => toggleSection('competitors')}>
             {isLoading && !competitors.length ? (
@@ -637,6 +706,19 @@ export default function AnalysisDashboard({ data, isLoading = false, onReset, on
                 </ul>
               </div>
             </div>
+          </CollapsibleSection>
+        </div>
+      )}
+
+      </>
+      ) : (
+        <div className="pdf-section">
+          <CollapsibleSection title="Peers Comparison vs Target Company" icon={<Target className="w-5 h-5 text-indigo-500" />} isOpen={true} onToggle={() => {}}>
+            {competitors.length > 0 || resolvedTicker || company.ticker ? (
+              <PeerComparison competitors={competitors} currentTicker={resolvedTicker || company.ticker} />
+            ) : (
+              <p className="text-slate-500 text-sm italic">No peer comparison data available yet.</p>
+            )}
           </CollapsibleSection>
         </div>
       )}
@@ -678,6 +760,131 @@ function EsgText({ text }: { text: string }) {
       })}
     </div>
   );
+}
+
+function WebIntelView({ webIntel }: { webIntel: any }) {
+  const hasData =
+    webIntel.news_signals?.length ||
+    webIntel.regulatory_alerts?.length ||
+    webIntel.competitive_signals?.length ||
+    webIntel.hiring_trend?.signal !== 'unknown';
+
+  if (!hasData) {
+    return (
+      <div className="p-5 bg-[#0a0d14]/80 border border-slate-800 rounded-xl text-sm text-slate-500 italic">
+        Live data unavailable
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-5">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <InfoTile label="Ticker" value={webIntel.ticker || '—'} />
+        <InfoTile label="Source" value={webIntel.data_source || '—'} />
+        <InfoTile label="Confidence" value={webIntel.confidence || '—'} />
+        <InfoTile label="Refresh" value={webIntel.refresh_interval || '—'} />
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        <div className="p-5 bg-[#0a0d14]/80 border border-slate-800 rounded-xl">
+          <div className="text-xs font-bold text-cyan-400 uppercase tracking-widest mb-3">News Signals</div>
+          {webIntel.news_signals?.length ? (
+            <div className="space-y-3">
+              {webIntel.news_signals.map((item: any, i: number) => (
+                <a key={i} href={item.url || undefined} target="_blank" rel="noreferrer" className="block rounded-lg border border-slate-800 bg-slate-950/40 p-3 hover:border-cyan-900/60 transition-colors">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="text-sm font-bold text-white leading-snug">{item.title}</div>
+                    <SentimentBadge sentiment={item.sentiment} />
+                  </div>
+                  <p className="mt-2 text-xs text-slate-400 leading-relaxed">{item.snippet}</p>
+                  {item.date && <div className="mt-2 text-[10px] text-slate-600 font-mono">{item.date}</div>}
+                </a>
+              ))}
+            </div>
+          ) : <p className="text-slate-500 text-sm italic">Live data unavailable</p>}
+        </div>
+
+        <div className="space-y-5">
+          <div className="p-5 bg-[#0a0d14]/80 border border-slate-800 rounded-xl">
+            <div className="text-xs font-bold text-cyan-400 uppercase tracking-widest mb-3">Hiring Trend</div>
+            <div className="flex items-center gap-3 mb-3">
+              <HiringBadge signal={webIntel.hiring_trend?.signal || 'unknown'} />
+            </div>
+            <p className="text-sm text-slate-300 leading-relaxed">{webIntel.hiring_trend?.evidence || 'Live data unavailable'}</p>
+          </div>
+
+          <div className="p-5 bg-[#0a0d14]/80 border border-slate-800 rounded-xl">
+            <div className="text-xs font-bold text-cyan-400 uppercase tracking-widest mb-3">Regulatory Alerts</div>
+            {webIntel.regulatory_alerts?.length ? (
+              <div className="space-y-2">
+                {webIntel.regulatory_alerts.map((alert: any, i: number) => (
+                  <div key={i} className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <p className="text-xs text-slate-300 leading-relaxed">{alert.summary}</p>
+                      <UrgencyBadge urgency={alert.urgency} />
+                    </div>
+                    {alert.date && <div className="mt-2 text-[10px] text-slate-600 font-mono">{alert.date}</div>}
+                  </div>
+                ))}
+              </div>
+            ) : <p className="text-slate-500 text-sm italic">Live data unavailable</p>}
+          </div>
+        </div>
+      </div>
+
+      <div className="p-5 bg-[#0a0d14]/80 border border-slate-800 rounded-xl">
+        <div className="text-xs font-bold text-cyan-400 uppercase tracking-widest mb-3">Competitive Signals</div>
+        {webIntel.competitive_signals?.length ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {webIntel.competitive_signals.map((item: any, i: number) => (
+              <a key={i} href={item.source || undefined} target="_blank" rel="noreferrer" className="rounded-lg border border-slate-800 bg-slate-950/40 p-3 text-xs text-slate-300 leading-relaxed hover:border-cyan-900/60 transition-colors">
+                {item.signal}
+              </a>
+            ))}
+          </div>
+        ) : <p className="text-slate-500 text-sm italic">Live data unavailable</p>}
+      </div>
+
+      {webIntel.data_gaps?.length > 0 && (
+        <div className="p-4 rounded-xl border border-amber-900/40 bg-amber-950/10">
+          <div className="text-[10px] font-bold text-amber-400 uppercase tracking-widest mb-2">Data Gaps</div>
+          <ul className="space-y-1">
+            {webIntel.data_gaps.map((gap: string, i: number) => (
+              <li key={i} className="text-xs text-slate-400">{gap}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SentimentBadge({ sentiment }: { sentiment: string }) {
+  const cls = sentiment === 'positive'
+    ? 'bg-emerald-950/40 text-emerald-400 border-emerald-500/30'
+    : sentiment === 'negative'
+      ? 'bg-rose-950/40 text-rose-400 border-rose-500/30'
+      : 'bg-slate-800/50 text-slate-400 border-slate-700';
+  return <span className={`shrink-0 rounded border px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest ${cls}`}>{sentiment || 'neutral'}</span>;
+}
+
+function HiringBadge({ signal }: { signal: string }) {
+  const cls = signal === 'expanding'
+    ? 'bg-emerald-950/40 text-emerald-400 border-emerald-500/30'
+    : signal === 'contracting'
+      ? 'bg-rose-950/40 text-rose-400 border-rose-500/30'
+      : 'bg-slate-800/50 text-slate-400 border-slate-700';
+  return <span className={`rounded border px-2.5 py-1 text-[10px] font-bold uppercase tracking-widest ${cls}`}>{signal || 'unknown'}</span>;
+}
+
+function UrgencyBadge({ urgency }: { urgency: string }) {
+  const cls = urgency === 'high'
+    ? 'bg-rose-950/40 text-rose-400 border-rose-500/30'
+    : urgency === 'medium'
+      ? 'bg-amber-950/40 text-amber-400 border-amber-500/30'
+      : 'bg-slate-800/50 text-slate-400 border-slate-700';
+  return <span className={`shrink-0 rounded border px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest ${cls}`}>{urgency || 'low'}</span>;
 }
 
 function StructuredESG({ esg }: { esg: any }) {
@@ -760,8 +967,8 @@ function StakeholderView({ stakeholder }: { stakeholder: any }) {
           </div>
         </div>
       </div>
-      <EntityList title="Selected Deep-Dive Entities" entities={selected} />
-      <EntityList title="Candidate Stakeholders" entities={candidates.slice(0, 15)} />
+      <EntityList title="Selected KPI Analysis" entities={selected} detailed />
+      <EntityList title="Candidate Stakeholders" entities={dedupeEntities(candidates).slice(0, 12)} />
     </div>
   );
 }
@@ -805,14 +1012,14 @@ function ManagementRow({ label, value }: { label: string; value: any }) {
   );
 }
 
-function EntityList({ title, entities }: { title: string; entities: any[] }) {
+function EntityList({ title, entities, detailed = false }: { title: string; entities: any[]; detailed?: boolean }) {
   if (!entities.length) return null;
   return (
     <div className="p-5 bg-[#0a0d14]/80 border border-slate-800 rounded-xl">
       <div className="text-xs font-bold text-cyan-400 uppercase tracking-widest mb-3">{title}</div>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+      <div className={`grid grid-cols-1 ${detailed ? 'lg:grid-cols-2' : 'md:grid-cols-2'} gap-3`}>
         {entities.map((entity, i) => (
-          <div key={`${entity.name}-${i}`} className="p-4 rounded-lg border border-slate-800 bg-slate-950/40">
+          <div key={`${entity.type}-${entity.industry}-${entity.name}-${i}`} className="p-4 rounded-lg border border-slate-800 bg-slate-950/40">
             <div className="flex items-start justify-between gap-3 mb-2">
               <div className="min-w-0">
                 <div className="text-sm font-bold text-white truncate">{entity.name}</div>
@@ -820,13 +1027,33 @@ function EntityList({ title, entities }: { title: string; entities: any[] }) {
               </div>
               <div className="text-[10px] text-cyan-400 font-mono whitespace-nowrap">{entity.sort_value}</div>
             </div>
-            <p className="text-xs text-slate-400 leading-relaxed">{entity.description}</p>
-            {entity.analysis && <p className="text-xs text-slate-300 leading-relaxed mt-3 border-t border-slate-800 pt-3">{entity.analysis}</p>}
+            {detailed ? (
+              <>
+                <div className="mb-2 inline-flex rounded-md border border-slate-800 bg-[#080a0f] px-2 py-1 text-[10px] font-bold uppercase tracking-widest text-slate-500">
+                  {entity.type === 'peer'
+                    ? 'Peer KPI comparison'
+                    : 'Supply-chain relationship'}
+                </div>
+                <p className="text-xs text-slate-300 leading-relaxed whitespace-pre-line">{entity.analysis || entity.description || 'KPI analysis pending.'}</p>
+              </>
+            ) : (
+              <p className="text-xs text-slate-500 leading-relaxed truncate">{entity.description === 'no_public_data' ? 'No public data' : entity.description}</p>
+            )}
           </div>
         ))}
       </div>
     </div>
   );
+}
+
+function dedupeEntities(entities: any[]) {
+  const seen = new Set<string>();
+  return entities.filter(entity => {
+    const key = `${entity.type}|${entity.industry}|${entity.name}`.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function metricSubGroup(label: string): 'valuation' | 'profitability' | 'overview' {

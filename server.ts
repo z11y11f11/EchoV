@@ -176,7 +176,7 @@ async function startServer() {
   }
 
   app.listen(PORT, "0.0.0.0", () => {
-    console.log(`FinAgent server running at http://localhost:${PORT}`);
+    console.log(`Echo server running at http://localhost:${PORT}`);
   });
 }
 

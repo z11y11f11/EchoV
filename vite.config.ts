@@ -10,6 +10,8 @@ export default defineConfig(({mode}) => {
     define: {
       'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),
       'process.env.OPENAI_API_KEY': JSON.stringify(env.OPENAI_API_KEY),
+      'process.env.BRIGHTDATA_API_KEY': JSON.stringify(env.BRIGHTDATA_API_KEY),
+      'process.env.BRIGHTDATA_SERP_ZONE': JSON.stringify(env.BRIGHTDATA_SERP_ZONE),
     },
     resolve: {
       alias: {

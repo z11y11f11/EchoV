@@ -16,9 +16,74 @@ interface StakeholderAgentInput {
   selectedEntityNames?: string[];
 }
 
+interface StakeholderSelectionInput {
+  ticker: string;
+  topIndustries: IndustryRevenue[];
+  selectedIndustries: string[];
+  selectionMode: "specific" | "comprehensive";
+  candidates: StakeholderEntity[];
+  selectedEntityNames: string[];
+  selectedEntityKeys?: string[];
+}
+
 const REFRESH_INTERVAL = "每周一 09:00";
 
 export class StakeholderAgent {
+  static async getTopIndustries(ticker: string): Promise<IndustryRevenue[]> {
+    return await this.identifyTopIndustries(ticker);
+  }
+
+  static async getCandidates(
+    ticker: string,
+    industries: string[],
+    selectionMode: "specific" | "comprehensive"
+  ): Promise<StakeholderEntity[]> {
+    return await this.buildCandidates(ticker, industries, selectionMode);
+  }
+
+  static async runSelectedAnalysis(
+    input: StakeholderSelectionInput,
+    onEvent?: (event: AgentEvent) => void
+  ): Promise<StakeholderOutput> {
+    const selectedKeys = new Set((input.selectedEntityKeys || []).map(key => key.toLowerCase()));
+    const selectedNames = new Set(input.selectedEntityNames.map(name => name.toLowerCase()));
+    const selectedEntities = selectedKeys.size > 0
+      ? input.candidates.filter(candidate => selectedKeys.has(this.entityKey(candidate).toLowerCase()))
+      : input.candidates.filter(candidate => selectedNames.has(candidate.name.toLowerCase()));
+
+    onEvent?.({
+      agent: "StakeholderAgent",
+      status: `Analyzing ${selectedEntities.length} selected stakeholder entities...`
+    });
+
+    const analyzedEntities = await this.analyzeSelectedEntities(input.ticker, selectedEntities);
+    const management = await this.analyzeManagement(input.ticker);
+    const companyIntro = await this.generateCompanyIntro(input.ticker, input.selectedIndustries);
+
+    const output: StakeholderOutput = {
+      as_of: new Date().toISOString(),
+      data_source: "llm_synthesis",
+      confidence: input.selectedIndustries.length > 0 ? "medium" : "low",
+      refresh_interval: REFRESH_INTERVAL,
+      top_industries: input.topIndustries,
+      selected_industries: input.selectedIndustries,
+      selection_mode: input.selectionMode,
+      candidates: input.candidates,
+      selected_entities: analyzedEntities,
+      management,
+      company_intro: companyIntro
+    };
+
+    validateAgentOutput("StakeholderAgent", output);
+    onEvent?.({
+      agent: "StakeholderAgent",
+      status: "Complete",
+      partial: { stakeholder: output } as any
+    });
+
+    return output;
+  }
+
   static async runAutonomousAnalysis(
     input: StakeholderAgentInput,
     onEvent?: (event: AgentEvent) => void
@@ -216,9 +281,14 @@ export class StakeholderAgent {
       ${JSON.stringify(entities)}
 
       For each selected entity, preserve the original fields and add analysis covering:
-      - strategic relationship to the target company
-      - dependency or bargaining-power implications
-      - key risk/opportunity signals
+      - If type is "peer": compare it with ${ticker} using key performance indicators only, excluding valuation.
+        Focus on market overview, scale, market position, revenue growth, margin quality, cash/debt posture, operating leverage, and financial resilience where public data exists.
+      - If type is "upstream" or "downstream": do NOT compare performance against ${ticker}.
+        Explain its supply-chain/channel relationship, dependency, bargaining power, concentration risk, switching risk, and what the target company should monitor.
+      - For every entity: include key risk/opportunity signals.
+
+      Do NOT analyze valuation multiples, target price, DCF, P/E, P/B, EV/EBITDA, or whether the selected entity is cheap/expensive.
+      If KPI data is not public, say so clearly and explain what data would be needed.
     `;
 
     const result = await runGenerativeAI(prompt, schemaProperties, ["selected_entities"]);
@@ -335,6 +405,10 @@ export class StakeholderAgent {
       .filter(candidate => candidate.type === type)
       .sort((a, b) => this.sortValueToNumber(b.sort_value) - this.sortValueToNumber(a.sort_value))
       .slice(0, limit);
+  }
+
+  private static entityKey(entity: StakeholderEntity): string {
+    return `${entity.type}|${entity.industry}|${entity.name}`;
   }
 
   private static sortValueToNumber(value: string): number {
